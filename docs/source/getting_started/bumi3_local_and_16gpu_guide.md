@@ -13,9 +13,8 @@ Git commit 是唯一代码版本标识。算法、配置、资产或部署代码
 tools_local/bumi_cluster.sh verify-code
 ```
 
-当前临时首次分发可用 Git bundle；长期唯一远端固定为
-`git@github.com:Mu-Yingchao/sonic_bumi_full.git`。开发机和两台服务器的 `origin` 已指向
-该地址，但必须先在 GitHub 创建同名空仓库才能首次 push。真实服务器地址放在被忽略的
+唯一真源是公开仓库 `https://github.com/Mu-Yingchao/sonic_bumi_full` 的 `main` 分支。
+开发机使用 SSH URL 推送，两台服务器使用 HTTPS URL 只读拉取。真实服务器地址放在被忽略的
 `.local/sonic_bumi_cluster.env`，不得记录密码或私钥正文。
 
 当前三份代码路径统一为：
@@ -28,18 +27,43 @@ tools_local/bumi_cluster.sh verify-code
 2.4 TiB、2.6 TiB 可用空间。旧 `/data/muyingchao/SONIC_BUMI` 和旧本地
 `bumi_local_deploy_bundle` 都不是本训练任务的源码、数据或 Python 导入来源。
 
+日常修改同步顺序：
+
+```bash
+# 只在本地开发机修改源码
+cd /home/yingchaomu/下载/sonic_bumi_full
+git status --short
+git pull --ff-only
+# 修改并完成测试后
+git add <明确的文件>
+git commit -m "说明本次修改"
+git push origin main
+
+# 再让两台服务器分别更新；服务器工作树不得直接编辑
+cd /data/ouqin/sonic_bumi_full
+git status --short
+git pull --ff-only
+```
+
+最后回到本地运行 `bash tools_local/bumi_cluster.sh verify-code`，必须看到两台
+`CODE_OK` 和同一个完整 SHA 后，修改才算完成同步。数据、环境、日志、checkpoint、ONNX
+和 `.local` 密钥配置不通过 Git 同步。
+
 ## 2. 本地 MuJoCo sim2sim
 
 安装（已有 Isaac Lab 环境时可直接复用其 Python）：
 
 ```bash
 cd /home/yingchaomu/下载/sonic_bumi_full
-python -m venv .venv_sim
+python3 -m venv .venv_sim
 source .venv_sim/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e 'gear_sonic[sim]'
 python gear_sonic/tools/validate_bumi3_sim2sim.py --skip-smoke
 ```
+
+若第一条命令提示 `ensurepip` 或 `venv` 不可用，先安装当前系统对应的 `python3-venv`；以后
+每次新开本地部署终端只需 `cd` 到仓库并执行 `source .venv_sim/bin/activate`，不必重复安装。
 
 Robot Encoder（`1170 -> 21`）：
 
@@ -103,6 +127,17 @@ python gear_sonic/scripts/run_bumi3_sim2sim.py \
   --robot-motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl
 ```
 
+正式跑物理前，建议先把上面命令末尾加 `--validate-only`；看到
+`BUMI3_SIM2SIM_VALIDATE_ONLY=PASS` 后再去掉该参数。服务器或无窗口快速验收：
+
+```bash
+python gear_sonic/scripts/run_bumi3_sim2sim.py \
+  --encoder robot \
+  --policy models/deployment/robot/model_step_030000.onnx \
+  --motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl \
+  --headless --no-real-time --duration 10
+```
+
 ## 3. Isaac Lab play 与 ONNX 导出
 
 `.pt` 的 play/eval 使用训练环境，必须把 checkpoint 配套配置中的服务器数据路径覆盖为
@@ -156,45 +191,146 @@ bash tools_local/bumi_cluster.sh launch-train bumi3_16gpu_scratch_100k_YYYYMMDD_
 旧策略。默认正式配置每卡 4096 env；若要做保持 32768 全局环境的速度对照，在本机
 私有配置中另设 `TRAIN_ENVS_PER_GPU=2048`，并使用新的 run ID，不能覆盖正式实验。
 
-日志跟踪（本地终端执行）与 TensorBoard：
+### 4.1 一条命令确认训练进度和 16 GPU
+
+以下命令必须在本地开发机执行，不要在 GPU14/GPU15 上再绕公网 SSH：
 
 ```bash
+cd /home/yingchaomu/下载/sonic_bumi_full
+RUN_ID=sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534
+bash tools_local/bumi_cluster.sh training-status "$RUN_ID"
+```
+
+健康输出应同时满足：GPU14 和 GPU15 都显示 `training_ranks=8`，共16个 rank；每张卡有约
+15 GiB 显存占用且利用率会变化；GPU14 最后显示持续增长的 `Learning iteration` 和
+`Total timesteps`；错误区为空。GPU15 是 ranks 8～15，非 global-rank 0 默认不重复输出
+训练表格或 TensorBoard，所以 `node1.log` 在 motion 加载结束后长期不增长是正常现象，
+不能据此判断 GPU15 没训练。梯度同步需要16个 rank 同时到达 collective；任何一个 rank
+退出后整个 DDP 作业都会报错退出。
+
+### 4.2 查看文本日志
+
+从本地开发机执行：
+
+```bash
+RUN_ID=sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534
+
 # GPU14/world-rank 0：训练指标、checkpoint 写入端
 ssh -i ~/.ssh/id_ed25519_sonic_bumi -p 22115 ouqin@117.161.121.54 \
-  'tail -f /data/ouqin/runs/RUN_ID/node0.log'
+  "tail -f /data/ouqin/runs/$RUN_ID/node0.log"
 
 # GPU15：非零 rank 的初始化和报错日志
 ssh -i ~/.ssh/id_ed25519_sonic_bumi -p 22116 ouqin@117.161.121.54 \
-  'tail -f /data/ouqin/runs/RUN_ID/node1.log'
+  "tail -f /data/ouqin/runs/$RUN_ID/node1.log"
 
-# 建立隧道并在 GPU14 启动 TensorBoard；浏览器打开 http://127.0.0.1:6006
-ssh -i ~/.ssh/id_ed25519_sonic_bumi -p 22115 \
-  -L 6006:127.0.0.1:6006 ouqin@117.161.121.54 \
-  '/data/ouqin/envs/sonic_bumi/bin/python -m tensorboard.main \
-   --logdir /data/ouqin/runs/RUN_ID/tensorboard --host 127.0.0.1 --port 6006'
 ```
+
+`tail -f` 用 `Ctrl+C` 退出只会停止查看，不会停止训练。如果终端提示符已经是
+`muyingchao@RTX4090-gpu-014` 或 `ouqin@RTX4090-gpu-014`，直接运行：
+
+```bash
+tail -f /data/ouqin/runs/sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534/node0.log
+```
+
+不要在服务器里使用 `~/.ssh/id_ed25519_sonic_bumi` 再连接公网地址；该私钥在本地开发机，
+而且服务器经公网映射回连自己可能得到 `Connection refused`。
+
+### 4.3 TensorBoard 曲线
+
+当前 GPU14 已在 `tensorboard_bumi3` tmux session 中启动 TensorBoard 6006端口。每次查看时，
+只需在本地开发机建立隧道并保持该终端开启：
+
+```bash
+ssh -N -i ~/.ssh/id_ed25519_sonic_bumi -p 22115 \
+  -L 6006:127.0.0.1:6006 ouqin@117.161.121.54
+```
+
+然后浏览器打开 `http://127.0.0.1:6006`。若本地6006被占用，改用
+`-L 16006:127.0.0.1:6006` 并打开 `http://127.0.0.1:16006`。
+
+检查/重启服务器上的 TensorBoard（先从本地 SSH 登录 GPU14，再执行）：
+
+```bash
+tmux has-session -t tensorboard_bumi3 && echo TENSORBOARD_RUNNING
+ss -ltn | grep ':6006'
+
+RUN_ID=sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534
+tmux new-session -d -s tensorboard_bumi3 \
+  "/data/ouqin/envs/sonic_bumi/bin/python -m tensorboard.main \
+   --logdir /data/ouqin/runs/$RUN_ID/tensorboard \
+   --host 127.0.0.1 --port 6006 \
+   >/data/ouqin/runs/$RUN_ID/tensorboard_server.log 2>&1"
+```
+
+如果 `tmux has-session` 已成功，不要重复执行 `new-session`。TensorFlow 未安装的提示不影响
+PyTorch event 文件的标量曲线读取。
 
 `last.pt` 每 50 step 更新一次，长期 `model_step_*.pt` 每 2000 step 保存一次；只有
 world rank 0 写这些文件。
 
-如果当前终端本来就在 GPU14 上，不要再次使用外网 SSH 地址或本地工作站私钥，直接执行：
+### 4.4 checkpoint 与 ONNX 策略导出
 
-```bash
-tail -f /data/ouqin/runs/RUN_ID/node0.log
-```
-
-训练 checkpoint 与导出策略的存放/传输规则：
+训练 checkpoint 与导出策略的存放规则：
 
 - GPU14/world-rank 0 保存：`/data/ouqin/runs/RUN_ID/last.pt` 和
   `model_step_XXXXXX.pt`；GPU15 不重复保存 checkpoint。
-- ONNX 不在训练中自动导出。选定 checkpoint 后在 GPU14 运行
-  `eval_agent_trl.py ... ++export_onnx_only=true`，结果写入
+- ONNX 不在训练中自动导出。选定 checkpoint 后在 GPU14 运行导出，结果写入
   `/data/ouqin/runs/RUN_ID/exported/`，包括 `*_g1.onnx` 和 `*_smpl.onnx`。
-- 在本地开发机运行以下命令，把已导出的策略分别下载到 Robot/SMPL 部署目录：
+
+当前16张卡都在训练，不要同时启动导出抢占显存。训练完成或释放一张 GPU 后，从本地登录
+GPU14 的 `ouqin` 账号：
+
+```bash
+ssh -i ~/.ssh/id_ed25519_sonic_bumi -p 22115 ouqin@117.161.121.54
+```
+
+然后在 GPU14 执行（示例导出30000 step，必须使用稳定的 `model_step_*.pt`，不要读取正在
+覆盖写入的 `last.pt`）：
+
+```bash
+cd /data/ouqin/sonic_bumi_full
+source .local/sonic_bumi_cluster.env
+RUN_ID=sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534
+STEP=030000
+CHECKPOINT=/data/ouqin/runs/$RUN_ID/model_step_$STEP.pt
+test -f "$CHECKPOINT"
+
+export OMNI_KIT_ACCEPT_EULA=YES
+export TMPDIR=/data/ouqin/runs/.tmp/ouqin/export
+mkdir -p "$TMPDIR"
+CUDA_VISIBLE_DEVICES=0 "$REMOTE_PYTHON" gear_sonic/eval_agent_trl.py \
+  checkpoint="$CHECKPOINT" \
+  ++num_envs=1 ++headless=true ++export_onnx_only=true \
+  ++manager_env.commands.motion.motion_lib_cfg.motion_file="$ROBOT_MOTION_DIR" \
+  ++manager_env.commands.motion.motion_lib_cfg.smpl_motion_file="$SMPL_MOTION_DIR"
+
+ls -lh /data/ouqin/runs/$RUN_ID/exported/model_step_${STEP}_{g1,smpl}.onnx
+```
+
+### 4.5 策略传回本地并部署
+
+退出 GPU14，回到本地开发机，执行以下命令自动下载并分别保存 Robot/SMPL 策略：
 
 ```bash
 cd /home/yingchaomu/下载/sonic_bumi_full
 bash tools_local/fetch_bumi_onnx.sh RUN_ID STEP
+```
+
+例如：
+
+```bash
+bash tools_local/fetch_bumi_onnx.sh \
+  sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534 30000
+```
+
+下载后直接按第2节执行本地部署。对应关系固定为：
+
+```text
+服务器 exported/model_step_030000_g1.onnx
+  -> 本地 models/deployment/robot/model_step_030000.onnx
+
+服务器 exported/model_step_030000_smpl.onnx
+  -> 本地 models/deployment/smpl/model_step_030000.onnx
 ```
 
 checkpoint/ONNX 是大体积、可再生的实验产物，不进入普通 Git 历史；服务器 run 目录是训练
@@ -238,7 +374,10 @@ PICO 遥操是 SMPL encoder 的实时输入生产端，不是当前离线 sim2si
 - 单卡 16 env/2 iteration smoke 已通过；双机 16 GPU、64 env/GPU、5 iteration smoke
   已通过，共 122,880 timestep。正式任务
   `sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534` 已从零启动：16 GPU、4096
-  env/GPU、全局 65,536 env、24 rollout step；前 9 次更新无 OOM、NCCL 或非有限指标错误。
+  env/GPU、全局 65,536 env、24 rollout step。实测 GPU14 的 ranks 0～7 和 GPU15 的
+  ranks 8～15 均显示 `WORLD_SIZE=16`；iteration 2560 时两端各8个训练进程、16张卡均有
+  约15 GiB显存占用和动态计算负载，无 OOM、NCCL 或非有限指标错误。GPU15 非零 rank
+  不输出重复训练表格，因此其 `node1.log` 停在 motion 加载信息属于预期行为。
 - 当前正式任务由 `setsid` 启动，Accelerate 主进程的父进程和 session 已脱离 SSH，因此
   本地终端关闭或公网 SSH 断开不会停止训练。后续新任务由运维脚本创建独立 `tmux` session；
   `status` 会同时显示 session 和训练进程。两节点内部训练网络若中断，NCCL 作业仍会失败，

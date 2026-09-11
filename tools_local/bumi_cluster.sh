@@ -11,14 +11,15 @@ usage() {
   cat <<'EOF'
 Usage:
   tools_local/bumi_cluster.sh status
+  tools_local/bumi_cluster.sh training-status RUN_ID
   tools_local/bumi_cluster.sh verify-code [EXPECTED_SHA]
   tools_local/bumi_cluster.sh launch-nccl RUN_ID
   tools_local/bumi_cluster.sh launch-smoke RUN_ID
   tools_local/bumi_cluster.sh launch-train RUN_ID
   tools_local/bumi_cluster.sh remote-node MACHINE_RANK RUN_ID ENVS ITERATIONS ROBOT_DIR SMPL_DIR
 
-The first four commands run on the workstation.  remote-node is an internal
-entry point invoked on each server.  The script never stores a password.
+All commands except the remote-* entry points run on the workstation.
+remote-node is invoked internally on each server.  The script never stores a password.
 EOF
 }
 
@@ -57,6 +58,25 @@ status() {
     echo "[$node]"
     ssh_node "$node" "hostname; git -C '$REMOTE_REPO' rev-parse --short HEAD 2>/dev/null || true; nvidia-smi --query-gpu=index,name,memory.used,utilization.gpu --format=csv,noheader; tmux list-sessions 2>/dev/null || true; pgrep -af 'accelerate.*train_agent_trl.py' || true"
   done
+}
+
+training_status() {
+  local run_id="$1" node rank remote_cmd pattern
+  [[ "$run_id" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Unsafe RUN_ID" >&2; exit 2; }
+  pattern="^$REMOTE_PYTHON -u gear_sonic/train_agent_trl.py .*experiment_dir=$RUN_ROOT/$run_id"
+  for node in gpu14 gpu15; do
+    if [[ "$node" == "gpu14" ]]; then rank=0; else rank=1; fi
+    echo "[$node / node$rank]"
+    printf -v remote_cmd \
+      'run=%q; log="$run/node%s.log"; test -f "$log" || { echo "Missing log: $log"; exit 1; }; stat -c "log_bytes=%%s log_modified=%%y" "$log"; printf "training_ranks="; pgrep -fc %q || true; nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader; grep -E "Traceback|Error executing|CUDA out of memory|NCCL.*(error|Error)|ProcessExitedException" "$log" | tail -5 || true' \
+      "$RUN_ROOT/$run_id" "$rank" "$pattern"
+    ssh_node "$node" "$remote_cmd"
+  done
+  echo "[gpu14 / rank-0 progress and checkpoints]"
+  printf -v remote_cmd \
+    'run=%q; grep "Learning iteration" "$run/node0.log" | tail -1; grep -E "Mean rewards:|Total timesteps:|Iteration time:|Total time:|ETA:" "$run/node0.log" | tail -5; find "$run" -maxdepth 1 -type f \( -name "last.pt" -o -name "model_step_*.pt" \) -printf "%%f %%s bytes\\n" | sort | tail -10' \
+    "$RUN_ROOT/$run_id"
+  ssh_node gpu14 "$remote_cmd"
 }
 
 verify_code() {
@@ -179,6 +199,7 @@ remote_node() {
 
 case "${1:-}" in
   status) load_config; status ;;
+  training-status) [[ $# -eq 2 ]] || { usage; exit 2; }; load_config; training_status "$2" ;;
   verify-code) load_config; verify_code "${2:-}" ;;
   launch-nccl) [[ $# -eq 2 ]] || { usage; exit 2; }; load_config; launch_nccl "$2" ;;
   launch-smoke) [[ $# -eq 2 ]] || { usage; exit 2; }; load_config; launch smoke "$2" ;;
