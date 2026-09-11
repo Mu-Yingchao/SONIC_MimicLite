@@ -237,16 +237,39 @@ tail -f /data/ouqin/runs/sonic_bumi3_16gpu_4096_scratch_100k_20260911_150534/nod
 
 ### 4.3 TensorBoard 曲线
 
-当前 GPU14 已在 `tensorboard_bumi3` tmux session 中启动 TensorBoard 6006端口。每次查看时，
-只需在本地开发机建立隧道并保持该终端开启：
+当前 GPU14 已在 `tensorboard_bumi3` tmux session 中启动 TensorBoard 6006端口。本机的
+6006可能被 VS Code 端口代理占用，因此默认使用本地16006映射远端6006。每次查看时，只需
+在本地开发机建立隧道并保持该终端开启：
 
 ```bash
 ssh -N -i ~/.ssh/id_ed25519_sonic_bumi -p 22115 \
-  -L 6006:127.0.0.1:6006 ouqin@117.161.121.54
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -L 16006:127.0.0.1:6006 ouqin@117.161.121.54
 ```
 
-然后浏览器打开 `http://127.0.0.1:6006`。若本地6006被占用，改用
-`-L 16006:127.0.0.1:6006` 并打开 `http://127.0.0.1:16006`。
+然后浏览器打开 `http://127.0.0.1:16006`。这个 SSH 终端没有输出且一直占用前台是正常
+状态，`Ctrl+C` 会关闭隧道但不会停止服务器训练或 TensorBoard。
+
+出现 `Address already in use` 时，先在本地检查占用者和HTTP响应：
+
+```bash
+ss -ltnp '( sport = :16006 )'
+curl -I --max-time 5 http://127.0.0.1:16006/
+```
+
+- 若返回 `HTTP/1.1 200 OK`，说明已有可用隧道，不要重复启动，直接打开浏览器。
+- 若监听进程是 `code` 且请求超时，说明端口被 VS Code 占用，改用本地26006：
+
+```bash
+ssh -N -i ~/.ssh/id_ed25519_sonic_bumi -p 22115 \
+  -o ExitOnForwardFailure=yes \
+  -L 26006:127.0.0.1:6006 ouqin@117.161.121.54
+# 浏览器打开 http://127.0.0.1:26006
+```
+
+`ExitOnForwardFailure=yes` 很重要：它保证本地端口绑定失败时 SSH 整体退出，不会发生“只绑定
+IPv6、浏览器的IPv4请求却被其他程序接走”的半成功状态。
 
 检查/重启服务器上的 TensorBoard（先从本地 SSH 登录 GPU14，再执行）：
 
@@ -260,6 +283,9 @@ tmux new-session -d -s tensorboard_bumi3 \
    --logdir /data/ouqin/runs/$RUN_ID/tensorboard \
    --host 127.0.0.1 --port 6006 \
    >/data/ouqin/runs/$RUN_ID/tensorboard_server.log 2>&1"
+
+sleep 5
+curl -I --max-time 5 http://127.0.0.1:6006/
 ```
 
 如果 `tmux has-session` 已成功，不要重复执行 `new-session`。TensorFlow 未安装的提示不影响
