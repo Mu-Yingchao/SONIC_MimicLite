@@ -65,11 +65,26 @@ python gear_sonic/tools/validate_bumi3_sim2sim.py --skip-smoke
 若第一条命令提示 `ensurepip` 或 `venv` 不可用，先安装当前系统对应的 `python3-venv`；以后
 每次新开本地部署终端只需 `cd` 到仓库并执行 `source .venv_sim/bin/activate`，不必重复安装。
 
+### 2.1 本机必须用 NVIDIA 启动器
+
+本机是 Intel 核显连接显示器、RTX 4090 处于 PRIME `on-demand` 的 X11 配置。
+直接执行 `python ...run_bumi3_sim2sim.py` 时，OpenGL 会落到 Mesa
+`llvmpipe`（CPU 软件渲染），MuJoCo 窗口会明显卡顿。本地有窗口的
+Robot/SMPL 部署统一使用以下启动器：
+
+```bash
+tools_local/run_bumi3_sim2sim_nvidia.sh <原 run_bumi3_sim2sim.py 的所有参数>
+```
+
+它只把 GLFW/OpenGL 渲染强制到 RTX 4090，不会改变 ONNX provider、策略输入输出、
+MuJoCo 物理或 50 Hz 控制频率。服务器 `--headless` 验收仍直接使用 Python
+入口。如需恢复 OpenGL 垂直同步，在命令前加 `BUMI_GL_VSYNC=1`。
+
 Robot Encoder（`1170 -> 21`）：
 
 ```bash
 source .venv_sim/bin/activate
-python gear_sonic/scripts/run_bumi3_sim2sim.py \
+tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder robot \
   --policy /绝对路径/model_step_030000_g1.onnx \
   --motion /绝对路径/robot_motion.pkl
@@ -78,7 +93,7 @@ python gear_sonic/scripts/run_bumi3_sim2sim.py \
 SMPL Encoder（`1470 -> 21`），推荐传入同名 Robot 动作用于一致的初始状态和红色影子：
 
 ```bash
-python gear_sonic/scripts/run_bumi3_sim2sim.py \
+tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder smpl \
   --policy /绝对路径/model_step_030000_smpl.onnx \
   --motion /绝对路径/smpl_motion.pkl \
@@ -115,12 +130,12 @@ models/deployment/smpl/model_step_050000.onnx
 ```bash
 cd /home/yingchaomu/下载/sonic_bumi_full
 source .venv_sim/bin/activate
-python gear_sonic/scripts/run_bumi3_sim2sim.py \
+tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder robot \
   --policy models/deployment/robot/model_step_030000.onnx \
   --motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl
 
-python gear_sonic/scripts/run_bumi3_sim2sim.py \
+tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder smpl \
   --policy models/deployment/smpl/model_step_030000.onnx \
   --motion data/bumi3_sim2sim_test/smpl/wave_R_001__A428.pkl \
