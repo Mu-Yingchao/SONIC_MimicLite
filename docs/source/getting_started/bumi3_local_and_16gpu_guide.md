@@ -51,6 +51,9 @@ git pull --ff-only
 
 ## 2. 本地 MuJoCo sim2sim
 
+可直接复制的离线 Robot/SMPL、Isaac Lab play 和 PICO 实时遥操命令集中在
+仓库根目录 `deploy.md`。
+
 安装（已有 Isaac Lab 环境时可直接复用其 Python）：
 
 ```bash
@@ -121,23 +124,25 @@ data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl
 data/bumi3_sim2sim_test/smpl/wave_R_001__A428.pkl
 models/deployment/robot/model_step_030000.onnx
 models/deployment/robot/model_step_050000.onnx
+models/deployment/robot/model_step_064000_robot.onnx
 models/deployment/smpl/model_step_030000.onnx
 models/deployment/smpl/model_step_050000.onnx
+models/deployment/smpl/model_step_064000_smpl.onnx
 ```
 
-因此 Robot 与 SMPL 的 30000-step 测试可分别执行：
+因此 Robot 与 SMPL 的 64000-step 测试可分别执行：
 
 ```bash
 cd /home/yingchaomu/下载/sonic_bumi_full
 source .venv_sim/bin/activate
 tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder robot \
-  --policy models/deployment/robot/model_step_030000.onnx \
+  --policy models/deployment/robot/model_step_064000_robot.onnx \
   --motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl
 
 tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder smpl \
-  --policy models/deployment/smpl/model_step_030000.onnx \
+  --policy models/deployment/smpl/model_step_064000_smpl.onnx \
   --motion data/bumi3_sim2sim_test/smpl/wave_R_001__A428.pkl \
   --robot-motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl
 ```
@@ -157,6 +162,10 @@ python gear_sonic/scripts/run_bumi3_sim2sim.py \
 
 `.pt` 的 play/eval 使用训练环境，必须把 checkpoint 配套配置中的服务器数据路径覆盖为
 本机绝对路径：
+它需要 PyTorch `*.pt` 和 Isaac Lab，不使用 ONNX，也不能在轻量 `.venv_sim`
+中运行。当前本机未安装 Isaac Lab 环境且未保存 checkpoint；服务器的 16 GPU
+训练还在运行，不得同时启动 play 抢占训练显存。完整的 checkpoint 下载、Robot/SMPL
+play 命令见 `deploy.md` 第 4 节。
 
 ```bash
 python gear_sonic/eval_agent_trl.py \
@@ -388,6 +397,28 @@ CUDA、Isaac Sim、Isaac Lab 和 `gear_sonic` 版本一致；Robot/SMPL 文件�
 PICO 遥操是 SMPL encoder 的实时输入生产端，不是当前离线 sim2sim 的第三种 policy。
 验收顺序应是：离线 Robot → 离线 SMPL（同名配对初始化）→ SMPL/PICO 5 点实时流 →
 真机低风险分级测试。
+
+### 5.1 BUMI3 SMPL/PICO 实时 sim-to-sim
+
+当前 BUMI3 Python 部署端已新增真正的实时链路，不复用 G1 C++ planner：
+
+```text
+PICO 五点 -> SMPL -> ZMQ pose[10帧] -> 780维 SMPL token
+                                   + 690维 BUMI3 proprioception
+                                   -> 1470维 SMPL ONNX -> 21维动作 -> MuJoCo PD
+```
+
+PICO 端必须以 `--target_fps 50 --num_frames_to_send 10` 运行。实时不可能提前获得未来
+9 帧，因此部署端把十帧窗口的最早帧作为当前参考，明确引入约 180 ms 延迟，
+不重复当前帧伪造 future reference。带窗口的 BUMI3 接收端使用：
+
+```bash
+tools_local/run_bumi3_pico_sim2sim_nvidia.sh \
+  --policy models/deployment/smpl/model_step_064000_smpl.onnx \
+  --zmq-url tcp://127.0.0.1:5556
+```
+
+完整的两终端命令、安全切入方式和验收顺序见 `deploy.md` 第 5 节。
 
 ## 6. 2026-09-11 首次建群记录
 
