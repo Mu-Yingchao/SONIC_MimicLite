@@ -15,6 +15,12 @@ ls -lh models/deployment/smpl/model_step_064000_smpl.onnx
 本机普通 Python 启动 MuJoCo 会落到 CPU 的 `llvmpipe`。所有带窗口的 MuJoCo
 命令必须使用 `tools_local/*_nvidia.sh` 启动器。
 
+当前 sim-to-sim 动力学在加载 XML 后会将全部 21 个驱动关节的
+`armature` 统一覆盖为 `0.01`；浮动根的 6 个自由度保持 `0`。地面和机器人
+碰撞使用 `condim=6`、`friction="1 0.05 0.01"`、elliptic 摩擦锥、
+`impratio=10` 和 `solref="0.01 1"`。这些参数对 Robot、SMPL 和 PICO 三条
+MuJoCo 路径同时生效，无需额外命令行参数。
+
 ## 2. 离线 Robot sim-to-sim
 
 ### 单个 Robot 动作

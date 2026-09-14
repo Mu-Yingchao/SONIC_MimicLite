@@ -83,6 +83,19 @@ tools_local/run_bumi3_sim2sim_nvidia.sh <原 run_bumi3_sim2sim.py 的所有参�
 MuJoCo 物理或 50 Hz 控制频率。服务器 `--headless` 验收仍直接使用 Python
 入口。如需恢复 OpenGL 垂直同步，在命令前加 `BUMI_GL_VSYNC=1`。
 
+### 2.2 MuJoCo 动力学与接触契约
+
+运行器加载 MJCF 后，按关节名称将 21 个驱动关节的 `dof_armature`
+全部覆盖为 `0.01`，并校验覆盖结果；root freejoint 的 6 个自由度不在
+映射表中，保持 `0`。XML 保留 `armature=0.03` 作为资产默认值，但不是
+sim-to-sim 的实际运行值。
+
+接触参数对齐已验证的 4340 设置：`condim=6`、
+`friction="1 0.05 0.01"`、`cone=elliptic`、`impratio=10`、
+`solref="0.01 1"`、Newton `iterations=80`；被动关节 `damping=0.001`。
+本次保留当前已审计的连杆质量、惯量、独立碰撞体和自碰撞隔离，不把
+4340 文件里同时发生的资产拓扑变化误归因为单一接触参数效果。
+
 Robot Encoder（`1170 -> 21`）：
 
 ```bash

@@ -323,17 +323,19 @@ def test_explicit_pd_matches_force_law_and_effort_limits() -> None:
         )
     assert np.any(np.isclose(np.abs(expected), contract.effort_mujoco))
     assert runner.model.opt.integrator == mujoco.mjtIntegrator.mjINT_EULER
-    np.testing.assert_allclose(runner.model.dof_damping[runner.dof_addresses], 0.05)
-    for side in ("l", "r"):
-        for suffix in ("arm_pitch", "arm_roll", "arm_yaw", "elbow_pitch"):
-            index = contract.mujoco_joint_names.index(f"{side}_{suffix}_joint")
-            assert np.isclose(runner.model.dof_armature[runner.dof_addresses[index]], 0.01)
+    np.testing.assert_allclose(runner.model.dof_damping[runner.dof_addresses], 0.001)
+    np.testing.assert_allclose(runner.model.dof_armature[runner.dof_addresses], 0.01)
+    root_dof = int(runner.model.jnt_dofadr[runner.root_joint_id])
+    np.testing.assert_allclose(runner.model.dof_armature[root_dof : root_dof + 6], 0.0)
+    assert runner.model.opt.cone == mujoco.mjtCone.mjCONE_ELLIPTIC
+    assert runner.model.opt.iterations == 80
+    assert np.isclose(runner.model.opt.impratio, 10.0)
 
 
 def test_arm_velocity_decays_without_contact_or_policy() -> None:
     """隔离接触和神经网络后，初始手臂角速度应衰减，不能被数值阻尼放大。
 
-    该测试使用用户指定的手臂 armature=0.01 和 XML 阻尼 0.05，在无重力、离地
+    该测试使用全部驱动关节 armature=0.01 和 XML 被动阻尼 0.001，在无重力、离地
     状态注入 1rad/s 的 arm-yaw 速度，验证当前外部 PD 与部署惯量组合可以衰减扰动。
     测试检查真实物理响应，避免仅检查有限值和输入维度而漏掉动力学异常。
     """
@@ -423,6 +425,20 @@ def test_runtime_visual_and_collision_geoms_match_original_xml() -> None:
     ) == 9
     assert np.all(runner.model.geom_contype[collision_geom_ids] == 1)
     assert np.all(runner.model.geom_conaffinity[collision_geom_ids] == 0)
+    assert np.all(runner.model.geom_condim[collision_geom_ids] == 6)
+    np.testing.assert_allclose(
+        runner.model.geom_friction[collision_geom_ids],
+        np.tile([1.0, 0.05, 0.01], (collision_geom_ids.size, 1)),
+    )
+    np.testing.assert_allclose(
+        runner.model.geom_solref[collision_geom_ids],
+        np.tile([0.01, 1.0], (collision_geom_ids.size, 1)),
+    )
+    ground_id = mujoco.mj_name2id(runner.model, mujoco.mjtObj.mjOBJ_GEOM, "ground")
+    assert ground_id >= 0
+    assert runner.model.geom_condim[ground_id] == 6
+    np.testing.assert_allclose(runner.model.geom_friction[ground_id], [1.0, 0.05, 0.01])
+    np.testing.assert_allclose(runner.model.geom_solref[ground_id], [0.01, 1.0])
     collision_names = {
         mujoco.mj_id2name(runner.model, mujoco.mjtObj.mjOBJ_GEOM, int(geom_id))
         for geom_id in collision_geom_ids

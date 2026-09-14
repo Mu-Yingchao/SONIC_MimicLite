@@ -1,12 +1,14 @@
 <mujoco model="bumi3.0">
   <compiler angle="radian" meshdir="../meshes/bumi3/"/>
+  <!-- BUMI3 4340 contact solver settings validated by the native SONIC deployment. -->
+  <option iterations="80" solver="Newton" cone="elliptic" impratio="10"/>
 
   <default>
-    <joint damping="0.05" armature="0.03" frictionloss="0.1"/>
+    <joint damping="0.001" armature="0.03" frictionloss="0.1"/>
     <!--
-      按用户要求，21 个电机关节的被动阻尼对齐 G1 的 0.05；这不是无电机关节，
-      也不是 PD 的 Kd。八个肩肘关节单独指定 armature=0.01，sim2sim 配置保持相同值；
-      其余关节保留原 XML 默认惯量，由运行器按原分组配置覆盖；质量、连杆惯量和执行器不变。
+      被动 damping=0.001 与 4340 资产一致，不是显式 PD 的 Kd。XML 默认
+      armature=0.03 只是资产默认值；sim2sim 运行器加载后会将全部 21 个驱动
+      关节精确覆盖为 0.01，浮动根保持 0。
       可视网格不参与碰撞；碰撞体单独声明。机器人使用 contype=1/conaffinity=0，
       地面使用 contype=0/conaffinity=1，只保留机器人-地面接触，彻底隔离机器人自碰撞。
     -->
@@ -14,7 +16,9 @@
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0"/>
     </default>
     <default class="collision">
-      <geom contype="1" conaffinity="0" condim="3" group="3" density="0" friction="1 0.005 0.0001" rgba="0 0 0 0"/>
+      <geom contype="1" conaffinity="0" condim="6" group="3" density="0"
+            friction="1 0.05 0.01" solref="0.01 1" solimp="0.9 0.95 0.001"
+            rgba="0 0 0 0"/>
     </default>
   </default>
 
@@ -51,7 +55,9 @@
     <light directional="true" diffuse=".4 .4 .4" specular="0.1 0.1 0.1" pos="0 0 5.0" dir="0 0 -1" castshadow="false"/>
     <light directional="true" diffuse=".6 .6 .6" specular="0.2 0.2 0.2" pos="0 0 4" dir="0 0 -1"/>
     <!-- sim2sim 使用世界坐标 Z=0 作为统一地面；动作加载器只归零水平根位置，不改动参考根高度。 -->
-    <geom name="ground" type="plane" size="0 0 1" pos="0.001 0 0" quat="1 0 0 0" material="matplane" contype="0" conaffinity="1" condim="3" friction="1 0.005 0.0001"/>
+    <geom name="ground" type="plane" size="0 0 1" pos="0.001 0 0" quat="1 0 0 0"
+          material="matplane" contype="0" conaffinity="1" condim="6"
+          friction="1 0.05 0.01" solref="0.01 1" solimp="0.9 0.95 0.001"/>
 
     <body name="base_link" pos="0 0 0.55">
       <inertial pos="1.254094e-03 -2.171701e-03 4.494330e-02" mass="1.914587e+00" fullinertia="4.581786e-03 2.116897e-03 4.196393e-03 -1.102273e-05 -6.894191e-06 -2.899742e-05"/>
