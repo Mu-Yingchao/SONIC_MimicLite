@@ -74,8 +74,10 @@ except ImportError:
 
 try:
     import xrobotoolkit_sdk as xrt
-except ImportError:
+    _XRT_IMPORT_ERROR = None
+except ImportError as error:
     xrt = None
+    _XRT_IMPORT_ERROR = error
 
 try:
     from gear_sonic.utils.teleop.solver.hand.g1_gripper_ik_solver import (
@@ -1581,8 +1583,9 @@ def _init_input_source(
 
     if xrt is None:
         raise ImportError(
-            "XRoboToolkit SDK not available. Install xrobotoolkit_sdk to run Pico streaming."
-        )
+            "XRoboToolkit SDK import failed. Run `bash install_scripts/install_pico.sh`; "
+            f"original error: {_XRT_IMPORT_ERROR}"
+        ) from _XRT_IMPORT_ERROR
 
     subprocess.Popen(["bash", "/opt/apps/roboticsservice/runService.sh"])
     xrt.init()

@@ -122,11 +122,24 @@ SMPL，并发布 10 个连续 50 Hz 帧；BUMI3 端以约 180 ms 缓冲延迟获
 
 ### 一次性安装 PICO 环境
 
-当前本机尚无 `.venv_teleop`，执行：
+首次安装或重建 `.venv_teleop` 时执行：
 
 ```bash
 cd /home/yingchaomu/下载/sonic_bumi_full
 bash install_scripts/install_pico.sh
+```
+
+只运行 PICO 发布端、不需要在这个环境中安装 MuJoCo/Unitree 依赖时，可使用更快的配置：
+
+```bash
+SKIP_SIM_AND_UNITREE=1 bash install_scripts/install_pico.sh
+```
+
+安装后先验证 XRoboToolkit。输出 `XRT_IMPORT_OK` 才继续：
+
+```bash
+source .venv_teleop/bin/activate
+python -c "import xrobotoolkit_sdk; print('XRT_IMPORT_OK')"
 ```
 
 确认 PICO、两个手柄和两个脚踝 tracker 已完成校准，PICO 与 PC 位于同一网络，
@@ -146,7 +159,9 @@ python gear_sonic/scripts/pico_manager_thread_server.py \
 ```
 
 本流程故意不加 `--manager`，因为 BUMI3 当前不使用官方 G1 planner 状态机；程序会
-直接持续发布 `pose`。看到 `ZMQ socket bound to port 5556` 和周期 FPS 后保持运行。
+直接持续发布 `pose`。`torch.jit.script is deprecated` 是无害的 FutureWarning。发布端会先
+启动本机 `/opt/apps/roboticsservice`；PICO 未连接或身体数据尚未就绪时应继续等待。看到
+`ZMQ socket bound to port 5556` 和周期 FPS 后保持运行，再启动终端 2。
 
 ### 终端 2：SMPL ONNX → BUMI3 MuJoCo
 
@@ -156,7 +171,7 @@ cd /home/yingchaomu/下载/sonic_bumi_full
 tools_local/run_bumi3_pico_sim2sim_nvidia.sh \
   --policy models/deployment/smpl/model_step_064000_smpl.onnx \
   --zmq-url tcp://127.0.0.1:5556 \
-  --startup-timeout 60 \
+  --startup-timeout 300 \
   --stream-timeout 0.5
 ```
 
@@ -164,6 +179,11 @@ tools_local/run_bumi3_pico_sim2sim_nvidia.sh \
 单击 MuJoCo 窗口并按 `T`，才会从冻结的首个窗口切入实时追踪。关闭窗口或在终端
 按 `Ctrl+C` 退出。PICO 流超过 0.5 秒没有更新时，控制端会报 stale 并停止，而不是
 无限复用旧姿态。
+
+若终端 2 报 `no PICO pose received`，说明 5556 尚无有效 pose；先检查终端 1，不能
+通过重复启动终端 2 修复。若终端 1 报 `XRoboToolkit SDK import failed`，重新运行上面的
+安装命令及导入验证。`--startup-timeout 300` 只给连接和校准更多时间，不会掩盖
+`--stream-timeout 0.5` 的运行中断流保护。
 
 验收顺序：
 

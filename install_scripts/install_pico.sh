@@ -60,8 +60,15 @@ echo "[OK] uv $(uv --version)"
 # ── 2. Install a uv-managed Python 3.10 (includes dev headers / Python.h) ────
 echo "[INFO] Installing uv-managed Python 3.10 (includes development headers) …"
 uv python install 3.10
-MANAGED_PY="$(uv python find --no-project 3.10)"
+# `uv python find` may otherwise prefer /usr/bin/python3.10.  Ubuntu's runtime
+# interpreter does not include Python.h unless python3.10-dev is installed,
+# while the uv-managed distribution is self-contained and does include it.
+MANAGED_PY="$(uv python find --managed-python --no-project 3.10)"
 echo "[OK] Using Python: $MANAGED_PY"
+if [ ! -f "$(dirname "$(dirname "$MANAGED_PY")")/include/python3.10/Python.h" ]; then
+    echo "[ERROR] Managed Python is missing Python.h: $MANAGED_PY" >&2
+    exit 1
+fi
 
 # ── 3. Clean previous venv (if any) ──────────────────────────────────────────
 cd "$REPO_ROOT"
@@ -83,7 +90,9 @@ echo "[INFO] Installing XRoboToolkit SDK …"
 uv pip install cmake pybind11 setuptools
 echo "[OK] cmake $(cmake --version | head -1)"
 # Point CMake at pybind11's cmake config so find_package(pybind11) succeeds
-export CMAKE_PREFIX_PATH="$(python -m pybind11 --cmakedir)"
+# pybind11 3.1's CLI may print the path wrapped in quotes; CMake treats those
+# quotes as literal characters.  The Python API always emits the raw path.
+export CMAKE_PREFIX_PATH="$(python -c 'import pybind11; print(pybind11.get_cmake_dir())')"
 echo "[OK] pybind11 cmake dir: $CMAKE_PREFIX_PATH"
 
 # On aarch64 (Jetson Orin), build the PXREARobotSDK native lib from source

@@ -412,13 +412,29 @@ PICO 端必须以 `--target_fps 50 --num_frames_to_send 10` 运行。实时不�
 9 帧，因此部署端把十帧窗口的最早帧作为当前参考，明确引入约 180 ms 延迟，
 不重复当前帧伪造 future reference。带窗口的 BUMI3 接收端使用：
 
+首次安装发布端环境并验证 XRoboToolkit：
+
+```bash
+cd /home/yingchaomu/下载/sonic_bumi_full
+SKIP_SIM_AND_UNITREE=1 bash install_scripts/install_pico.sh
+source .venv_teleop/bin/activate
+python -c "import xrobotoolkit_sdk; print('XRT_IMPORT_OK')"
+```
+
+安装器强制使用带 `Python.h` 的 uv-managed Python 3.10，并把 pybind11 的真实 CMake
+目录传给 XRoboToolkit 构建系统。不要用系统 `/usr/bin/python3.10` 重建这个环境。
+
 ```bash
 tools_local/run_bumi3_pico_sim2sim_nvidia.sh \
   --policy models/deployment/smpl/model_step_064000_smpl.onnx \
-  --zmq-url tcp://127.0.0.1:5556
+  --zmq-url tcp://127.0.0.1:5556 \
+  --startup-timeout 300 \
+  --stream-timeout 0.5
 ```
 
-完整的两终端命令、安全切入方式和验收顺序见 `deploy.md` 第 5 节。
+必须等发布端出现 5556 已绑定且持续产生 pose 后再启动接收端。接收端的
+`no PICO pose received` 是发布端未出数据的下游症状。完整的两终端命令、安全切入方式、
+故障判断和验收顺序见 `deploy.md` 第 5 节。
 
 ## 6. 2026-09-11 首次建群记录
 
