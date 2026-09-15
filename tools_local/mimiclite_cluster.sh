@@ -106,10 +106,12 @@ status() {
 }
 
 preflight() {
+  local robot_dir="${1:-$ROBOT_MOTION_DIR}" smpl_dir="${2:-$SMPL_MOTION_DIR}"
   local node expected_ip command
   for node in node0 node1; do
     expected_ip="$(node_value "$node" ip)"
-    printf -v command 'set -eu; test "$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)" -eq 8; ip -4 addr show dev eth0 | grep -Fq %q; test -x %q; test -d %q; test -d %q; test "$(df -Pk / | awk "NR==2 {print \\$4}")" -gt 52428800; echo PREFLIGHT_OK' "$expected_ip" "$REMOTE_PYTHON" "$ROBOT_MOTION_DIR" "$SMPL_MOTION_DIR"
+    printf -v command 'set -eu; gpu_count="$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)"; test "$gpu_count" -eq 8 || { echo "Expected 8 GPUs, found $gpu_count" >&2; exit 1; }; ip -4 addr show dev eth0 | grep -Fq %q || { echo "Missing expected eth0 address: %s" >&2; exit 1; }; command -v git-lfs >/dev/null || { echo "git-lfs is missing" >&2; exit 1; }; test -x %q || { echo "Python missing or not executable: %s" >&2; exit 1; }; test -d %q || { echo "Robot data missing: %s" >&2; exit 1; }; test -d %q || { echo "SMPL data missing: %s" >&2; exit 1; }; free_kb="$(df -Pk / | awk "NR==2 {print \\$4}")"; test "$free_kb" -gt 52428800 || { echo "Less than 50 GiB free on root filesystem" >&2; exit 1; }; echo PREFLIGHT_OK' \
+      "$expected_ip" "$expected_ip" "$REMOTE_PYTHON" "$REMOTE_PYTHON" "$robot_dir" "$robot_dir" "$smpl_dir" "$smpl_dir"
     echo "[$node]"
     ssh_node "$node" "$command"
   done
@@ -207,7 +209,7 @@ launch_training() {
     robot_dir="$ROBOT_MOTION_DIR"; smpl_dir="$SMPL_MOTION_DIR"
   fi
   verify_code
-  preflight
+  preflight "$robot_dir" "$smpl_dir"
   remote_start node1 1 "$run_id" "$envs" "$iterations" "$robot_dir" "$smpl_dir"
   remote_start node0 0 "$run_id" "$envs" "$iterations" "$robot_dir" "$smpl_dir"
   echo "Started $mode: run=$run_id world=16 envs/GPU=$envs iterations=$iterations"
