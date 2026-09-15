@@ -50,7 +50,7 @@ GitHub main（代码唯一真源）
 项目名称在三端统一为 `SONIC_MimicLite`：
 
 ```text
-GitHub:    git@github.com:Mu-Yingchao/SONIC-MimicLite.git
+GitHub:    git@github.com:Mu-Yingchao/SONIC_MimicLite.git
 本地:      /home/yingchaomu/下载/SONIC_MimicLite
 Noetix-0: /root/SONIC_MimicLite  (118.196.95.17 / 172.31.0.32)
 Noetix-9: /root/SONIC_MimicLite  (14.103.42.170 / 172.31.0.2)
@@ -97,7 +97,7 @@ git push -u origin main
 正常情况下服务器只 clone 同一个仓库，不从旧项目复制一份再继续改：
 
 ```bash
-git clone git@github.com:Mu-Yingchao/SONIC-MimicLite.git /root/SONIC_MimicLite
+git clone git@github.com:Mu-Yingchao/SONIC_MimicLite.git /root/SONIC_MimicLite
 ```
 
 本项目首次初始化明确采用本地直传：先把干净的 `main` 推送到 GitHub，再用下面命令把
@@ -105,7 +105,7 @@ git clone git@github.com:Mu-Yingchao/SONIC-MimicLite.git /root/SONIC_MimicLite
 不会覆盖服务器内容：
 
 ```bash
-git remote set-url origin git@github.com:Mu-Yingchao/SONIC-MimicLite.git
+git remote set-url origin git@github.com:Mu-Yingchao/SONIC_MimicLite.git
 git push -u origin main
 bash tools_local/mimiclite_cluster.sh bootstrap-direct
 bash tools_local/mimiclite_cluster.sh verify-code
