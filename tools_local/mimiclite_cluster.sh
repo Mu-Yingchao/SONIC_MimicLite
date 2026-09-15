@@ -123,6 +123,7 @@ bootstrap_direct() {
     echo "origin must be $LOCAL_PUSH_REPO before bootstrap." >&2; exit 1;
   }
   for node in node0 node1; do
+    ssh_node "$node" "command -v git-lfs >/dev/null || { echo 'git-lfs is required on $node' >&2; exit 1; }"
     ssh_node "$node" "test ! -e '$REMOTE_REPO' || { echo 'Refusing existing target: $REMOTE_REPO' >&2; exit 1; }; mkdir -p '$REMOTE_REPO'"
     rsync_tracked_node "$node" "$REMOTE_REPO/"
     rsync_node "$node" "$REPO_ROOT/.git/" "$REMOTE_REPO/.git/"

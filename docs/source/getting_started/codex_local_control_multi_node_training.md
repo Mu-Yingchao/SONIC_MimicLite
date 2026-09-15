@@ -104,6 +104,7 @@ git clone git@github.com:Mu-Yingchao/SONIC_MimicLite.git /root/SONIC_MimicLite
 本项目首次初始化明确采用本地直传：先把干净的 `main` 推送到 GitHub，再用下面命令把
 同一工作树和 Git 元数据上传到两台空服务器目录。该命令若发现目标已存在会立即拒绝，
 不会覆盖服务器内容；上传后只将该新目录的归属修正为 `root:root`：
+两台服务器必须先安装 `git-lfs`，否则脚本会在创建目标目录前拒绝上传。
 
 ```bash
 git remote set-url origin git@github.com:Mu-Yingchao/SONIC_MimicLite.git
