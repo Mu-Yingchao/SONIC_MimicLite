@@ -50,7 +50,8 @@ GitHub main（代码唯一真源）
 项目名称在三端统一为 `SONIC_MimicLite`：
 
 ```text
-GitHub:    git@github.com:Mu-Yingchao/SONIC_MimicLite.git
+GitHub:    git@github.com:Mu-Yingchao/SONIC_MimicLite.git (本地 push)
+           https://github.com/Mu-Yingchao/SONIC_MimicLite.git (服务器只读 pull)
 本地:      /home/yingchaomu/下载/SONIC_MimicLite
 Noetix-0: /root/SONIC_MimicLite  (118.196.95.17 / 172.31.0.32)
 Noetix-9: /root/SONIC_MimicLite  (14.103.42.170 / 172.31.0.2)
@@ -102,7 +103,7 @@ git clone git@github.com:Mu-Yingchao/SONIC_MimicLite.git /root/SONIC_MimicLite
 
 本项目首次初始化明确采用本地直传：先把干净的 `main` 推送到 GitHub，再用下面命令把
 同一工作树和 Git 元数据上传到两台空服务器目录。该命令若发现目标已存在会立即拒绝，
-不会覆盖服务器内容：
+不会覆盖服务器内容；上传后只将该新目录的归属修正为 `root:root`：
 
 ```bash
 git remote set-url origin git@github.com:Mu-Yingchao/SONIC_MimicLite.git

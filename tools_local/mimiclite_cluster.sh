@@ -35,12 +35,13 @@ load_config() {
   source "$CONFIG_FILE"
   : "${NODE0_SSH:?}" "${NODE0_PORT:?}" "${NODE0_KEY:?}"
   : "${NODE1_SSH:?}" "${NODE1_PORT:?}" "${NODE1_KEY:?}"
-  : "${GITHUB_REPO:?}" "${REMOTE_REPO:?}" "${REMOTE_PYTHON:?}" "${RUN_ROOT:?}"
+  : "${LOCAL_PUSH_REPO:?}" "${GITHUB_REPO:?}" "${REMOTE_REPO:?}" "${REMOTE_PYTHON:?}" "${RUN_ROOT:?}"
   : "${MASTER_ADDR:?}" "${MASTER_PORT:?}" "${NCCL_MASTER_PORT:?}"
   : "${ROBOT_MOTION_DIR:?}" "${SMPL_MOTION_DIR:?}"
   NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-=eth0}"
   NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
   NCCL_IB_HCA="${NCCL_IB_HCA:-}"
+  REMOTE_OWNER="${REMOTE_OWNER:-root:root}"
 }
 
 validate_run_id() {
@@ -118,13 +119,14 @@ bootstrap_direct() {
   [[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]] || {
     echo "Tracked worktree must be clean before bootstrap." >&2; exit 1;
   }
-  [[ "$(git -C "$REPO_ROOT" remote get-url origin)" == "$GITHUB_REPO" ]] || {
-    echo "origin must be $GITHUB_REPO before bootstrap." >&2; exit 1;
+  [[ "$(git -C "$REPO_ROOT" remote get-url origin)" == "$LOCAL_PUSH_REPO" ]] || {
+    echo "origin must be $LOCAL_PUSH_REPO before bootstrap." >&2; exit 1;
   }
   for node in node0 node1; do
     ssh_node "$node" "test ! -e '$REMOTE_REPO' || { echo 'Refusing existing target: $REMOTE_REPO' >&2; exit 1; }; mkdir -p '$REMOTE_REPO'"
     rsync_tracked_node "$node" "$REMOTE_REPO/"
     rsync_node "$node" "$REPO_ROOT/.git/" "$REMOTE_REPO/.git/"
+    ssh_node "$node" "chown -R '$REMOTE_OWNER' '$REMOTE_REPO' && git -C '$REMOTE_REPO' remote set-url origin '$GITHUB_REPO'"
   done
 }
 
@@ -139,7 +141,7 @@ sync_code() {
 
 verify_code() {
   local expected="${1:-$(git -C "$REPO_ROOT" rev-parse HEAD)}" github_sha node actual dirty
-  [[ "$(git -C "$REPO_ROOT" remote get-url origin)" == "$GITHUB_REPO" ]] || { echo "Local origin mismatch" >&2; exit 1; }
+  [[ "$(git -C "$REPO_ROOT" remote get-url origin)" == "$LOCAL_PUSH_REPO" ]] || { echo "Local origin mismatch" >&2; exit 1; }
   [[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]] || { echo "Local tracked worktree is dirty" >&2; exit 1; }
   github_sha="$(git -C "$REPO_ROOT" ls-remote "$GITHUB_REPO" refs/heads/main | awk '{print $1}')"
   [[ "$github_sha" == "$expected" ]] || { echo "GitHub SHA mismatch: ${github_sha:-missing} != $expected" >&2; exit 1; }
