@@ -13,6 +13,7 @@ Workstation commands:
   preflight                      Validate GPUs, network, disk, Python and data
   bootstrap-direct              Initial direct upload; refuses existing targets
   sync-code                      Fast-forward both nodes from GitHub main
+  sync-code-bundle               Fallback when nodes cannot reach GitHub
   verify-code [EXPECTED_SHA]     Verify local, GitHub and both nodes use one SHA
   launch-nccl RUN_ID             Run a two-node, 16-rank NCCL smoke test
   launch-smoke RUN_ID            Run a five-iteration training smoke test
@@ -140,6 +141,29 @@ sync_code() {
   done
 }
 
+sync_code_bundle() {
+  local expected github_sha node actual dirty bundle remote_bundle command
+  expected="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+  [[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)" ]] || { echo "Local tracked worktree is dirty" >&2; exit 1; }
+  github_sha="$(git -C "$REPO_ROOT" ls-remote "$GITHUB_REPO" refs/heads/main | awk '{print $1}')"
+  [[ "$github_sha" == "$expected" ]] || { echo "Refusing bundle: GitHub main is not local HEAD" >&2; exit 1; }
+  for node in node0 node1; do
+    actual="$(ssh_node "$node" "git -C '$REMOTE_REPO' rev-parse HEAD")"
+    dirty="$(ssh_node "$node" "git -C '$REMOTE_REPO' status --porcelain --untracked-files=no")"
+    [[ -z "$dirty" ]] || { echo "$node tracked worktree is dirty" >&2; exit 1; }
+    if [[ "$actual" == "$expected" ]]; then echo "$node already current: $actual"; continue; fi
+    git -C "$REPO_ROOT" merge-base --is-ancestor "$actual" "$expected" || { echo "$node cannot fast-forward from $actual" >&2; exit 1; }
+    bundle="$(mktemp "/tmp/SONIC_MimicLite_${node}.XXXXXX.bundle")"
+    remote_bundle="/tmp/SONIC_MimicLite_${expected}.bundle"
+    git -C "$REPO_ROOT" bundle create "$bundle" main "^$actual"
+    rsync_node "$node" "$bundle" "$remote_bundle"
+    rm -f "$bundle"
+    printf -v command 'set -eu; cd %q; test "$(git rev-parse HEAD)" = %q; test -z "$(git status --porcelain --untracked-files=no)"; git fetch %q main; git merge --ff-only FETCH_HEAD; rm -f %q; git rev-parse HEAD' "$REMOTE_REPO" "$actual" "$remote_bundle" "$remote_bundle"
+    echo "[$node / bundle fallback]"
+    ssh_node "$node" "$command"
+  done
+}
+
 verify_code() {
   local expected="${1:-$(git -C "$REPO_ROOT" rev-parse HEAD)}" github_sha node actual dirty
   [[ "$(git -C "$REPO_ROOT" remote get-url origin)" == "$LOCAL_PUSH_REPO" ]] || { echo "Local origin mismatch" >&2; exit 1; }
@@ -251,6 +275,7 @@ case "${1:-}" in
   preflight) load_config; preflight ;;
   bootstrap-direct) load_config; bootstrap_direct ;;
   sync-code) load_config; sync_code ;;
+  sync-code-bundle) load_config; sync_code_bundle ;;
   verify-code) load_config; verify_code "${2:-}" ;;
   launch-nccl) [[ $# -eq 2 ]] || { usage; exit 2; }; load_config; launch_nccl "$2" ;;
   launch-smoke) [[ $# -eq 2 ]] || { usage; exit 2; }; load_config; launch_training smoke "$2" ;;

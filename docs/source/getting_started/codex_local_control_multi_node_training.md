@@ -203,6 +203,8 @@ git rev-parse HEAD
 公网 GitHub 暂时不可达时，可以从本地生成增量 `git bundle`，复制到服务器后 fetch；
 仍然必须先确认服务器 tracked worktree 干净、HEAD 是预期旧 SHA，再做 `merge --ff-only`。
 bundle 是传输替代方案，不是新的代码真源，GitHub 最终仍应包含该提交。
+本项目对应命令是 `bash tools_local/mimiclite_cluster.sh sync-code-bundle`；它只有在 GitHub
+`main` 已等于本地 HEAD 时才会生成增量 bundle。
 
 当前项目最终验收：
 
