@@ -96,6 +96,11 @@ sim-to-sim 的实际运行值。
 本次保留当前已审计的连杆质量、惯量、独立碰撞体和自碰撞隔离，不把
 4340 文件里同时发生的资产拓扑变化误归因为单一接触参数效果。
 
+实测 viewer 进程已出现在 RTX 4090 的 NVIDIA 图形进程列表，占用约
+179 MiB 显存。单环境 ONNX 使用 2/1 intra/inter-op 线程，PICO PyTorch
+也使用 2/1；原默认会在一次 1470 维推理中使用约 15 个 CPU 核，与
+viewer 和 PICO 生产端产生调度抢占。
+
 Robot Encoder（`1170 -> 21`）：
 
 ```bash
@@ -138,24 +143,26 @@ data/bumi3_sim2sim_test/smpl/wave_R_001__A428.pkl
 models/deployment/robot/model_step_030000.onnx
 models/deployment/robot/model_step_050000.onnx
 models/deployment/robot/model_step_064000_robot.onnx
+models/deployment/robot/model_step_086000.onnx
 models/deployment/smpl/model_step_030000.onnx
 models/deployment/smpl/model_step_050000.onnx
 models/deployment/smpl/model_step_064000_smpl.onnx
+models/deployment/smpl/model_step_086000.onnx
 ```
 
-因此 Robot 与 SMPL 的 64000-step 测试可分别执行：
+当前最新综合候选为 86000-step，Robot 与 SMPL 测试可分别执行：
 
 ```bash
 cd /home/yingchaomu/下载/sonic_bumi_full
 source .venv_sim/bin/activate
 tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder robot \
-  --policy models/deployment/robot/model_step_064000_robot.onnx \
+  --policy models/deployment/robot/model_step_086000.onnx \
   --motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl
 
 tools_local/run_bumi3_sim2sim_nvidia.sh \
   --encoder smpl \
-  --policy models/deployment/smpl/model_step_064000_smpl.onnx \
+  --policy models/deployment/smpl/model_step_086000.onnx \
   --motion data/bumi3_sim2sim_test/smpl/wave_R_001__A428.pkl \
   --robot-motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl
 ```
@@ -166,10 +173,29 @@ tools_local/run_bumi3_sim2sim_nvidia.sh \
 ```bash
 python gear_sonic/scripts/run_bumi3_sim2sim.py \
   --encoder robot \
-  --policy models/deployment/robot/model_step_030000.onnx \
+  --policy models/deployment/robot/model_step_086000.onnx \
   --motion data/bumi3_sim2sim_test/robot/wave_R_001__A428.pkl \
   --headless --no-real-time --duration 10
 ```
+
+86000 的 wave 无窗口验收两路均完整运行 500/500 帧，最低根高度分别为
+Robot `0.4572 m`、SMPL `0.4493 m`。深蹲轨迹两路最低根高度均为
+`0.2566 m`，说明髋膝活动范围没有被部署端普遍锁死。
+
+真正跪地仍未通过。训练集包含 76 条名称明确的 kneeling Robot 动作，本地已保留
+以下三对运行测试数据（这些运行数据仍由 Git 忽略）：
+
+```text
+data/bumi3_sim2sim_test/kneeling/{robot,smpl}/kneeling_start_001__A037.pkl
+data/bumi3_sim2sim_test/kneeling/{robot,smpl}/kneeling_loop_003__A040.pkl
+data/bumi3_sim2sim_test/kneeling/{robot,smpl}/kneeling_stop_003__A049.pkl
+```
+
+86000 的 start 轨迹能够下降但没有完整复现跪姿，loop/stop 在膝地接触阶段会倒塌，
+Robot 与 SMPL 表现一致。当前证据将问题限定为策略对膝地接触的鲁棒性或
+Isaac Lab/MuJoCo 接触与碰撞差异，而非 GPU 渲染、关节映射或 PICO 独有问题。
+下一步需要在 Isaac Lab play 中用同一 motion/checkpoint 对照，再比较两端膝、脚
+碰撞体及接触力。
 
 ## 3. Isaac Lab play 与 ONNX 导出
 
@@ -425,6 +451,10 @@ PICO 端必须以 `--target_fps 50 --num_frames_to_send 10` 运行。实时不�
 9 帧，因此部署端把十帧窗口的最早帧作为当前参考，明确引入约 180 ms 延迟，
 不重复当前帧伪造 future reference。带窗口的 BUMI3 接收端使用：
 
+当前 `unitoken_all_noz` tokenizer 按训练契约不编码全局平移和 root z。PICO 端仅把
+人体整体向下移动不会命令机器人跪地，必须由五点解算产生真实髋膝局部姿态；但配对
+离线 SMPL kneeling 也失败，因此不应通过破坏 no-z 输入契约来掩盖问题。
+
 首次安装发布端环境并验证 XRoboToolkit：
 
 ```bash
@@ -439,7 +469,7 @@ python -c "import xrobotoolkit_sdk; print('XRT_IMPORT_OK')"
 
 ```bash
 tools_local/run_bumi3_pico_sim2sim_nvidia.sh \
-  --policy models/deployment/smpl/model_step_064000_smpl.onnx \
+  --policy models/deployment/smpl/model_step_086000.onnx \
   --zmq-url tcp://127.0.0.1:5556 \
   --startup-timeout 300 \
   --stream-timeout 0.5

@@ -718,7 +718,12 @@ class Policy(Protocol):
 
 
 class OnnxRobotPolicy:
-    """加载联合 ONNX；保留原类名兼容调用，按编码器核验 1170/1470 输入与 21 输出。"""
+    """加载联合 ONNX；保留原类名兼容调用，按编码器核验 1170/1470 输入与 21 输出。
+
+    对 50 Hz 的单环境小批量推理，ORT 默认的全核线程池会用十多个 CPU 核换取
+    不必要的毫秒级收益，并与 MuJoCo viewer/PICO 争抢调度。因此固定两个
+    intra-op 线程、一个 inter-op 线程且禁止空转。
+    """
 
     def __init__(
         self, path: str | Path, contract: Bumi3Contract, provider: str = "cpu",
@@ -738,7 +743,17 @@ class OnnxRobotPolicy:
             if provider == "cuda"
             else ["CPUExecutionProvider"]
         )
-        self.session = ort.InferenceSession(str(policy_path), providers=providers)
+        session_options = ort.SessionOptions()
+        session_options.intra_op_num_threads = 2
+        session_options.inter_op_num_threads = 1
+        session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
+        session_options.add_session_config_entry("session.inter_op.allow_spinning", "0")
+        self.intra_op_num_threads = session_options.intra_op_num_threads
+        self.inter_op_num_threads = session_options.inter_op_num_threads
+        self.session = ort.InferenceSession(
+            str(policy_path), sess_options=session_options, providers=providers
+        )
         if len(self.session.get_inputs()) != 1 or len(self.session.get_outputs()) != 1:
             raise ValueError("BUMI3 联合 ONNX 必须只有一个输入和一个输出")
         self.input_name = self.session.get_inputs()[0].name
@@ -768,6 +783,8 @@ class ZeroPolicy:
     def __init__(self, contract: Bumi3Contract, *, encoder: EncoderMode = "robot"):
         self.input_dim = contract.policy_input_dim(encoder)
         self.output_dim = contract.action_dim
+        self.intra_op_num_threads = 0
+        self.inter_op_num_threads = 0
 
     def __call__(self, observation: np.ndarray) -> np.ndarray:
         if np.asarray(observation).size != self.input_dim:
@@ -1571,6 +1588,17 @@ class Bumi3SonicSim2Sim:
         start_reference_diagnostics = self.reference_pose_diagnostics(self.motion_frame)
         started = time.monotonic()
         completed_steps = 0
+        minimum_root_height = float(self.data.qpos[self.root_qpos_address + 2])
+        knee_indices = np.asarray(
+            [
+                self.contract.mujoco_joint_names.index("l_knee_pitch_joint"),
+                self.contract.mujoco_joint_names.index("r_knee_pitch_joint"),
+            ],
+            dtype=np.int64,
+        )
+        maximum_knee_flexion = float(
+            np.max(self.data.qpos[self.qpos_addresses[knee_indices]])
+        )
         try:
             while control_steps is None or completed_steps < control_steps:
                 if viewer is not None and not viewer.is_running():
@@ -1578,6 +1606,14 @@ class Bumi3SonicSim2Sim:
                 tick = time.monotonic()
                 self.step_control()
                 completed_steps += 1
+                minimum_root_height = min(
+                    minimum_root_height,
+                    float(self.data.qpos[self.root_qpos_address + 2]),
+                )
+                maximum_knee_flexion = max(
+                    maximum_knee_flexion,
+                    float(np.max(self.data.qpos[self.qpos_addresses[knee_indices]])),
+                )
                 if viewer is not None:
                     if not viewer.is_running():
                         break
@@ -1605,6 +1641,8 @@ class Bumi3SonicSim2Sim:
             "control_steps_per_second": completed_steps / max(elapsed, 1e-12),
             "simulation_time": float(self.data.time),
             "root_height": float(self.data.qpos[self.root_qpos_address + 2]),
+            "minimum_root_height": minimum_root_height,
+            "maximum_knee_flexion_radians": maximum_knee_flexion,
             "max_abs_torque": float(np.max(np.abs(self.last_torque_mujoco))),
             "max_abs_action": float(np.max(np.abs(self.last_action_policy))),
             "reference_start_base_tilt_degrees": start_reference_diagnostics[

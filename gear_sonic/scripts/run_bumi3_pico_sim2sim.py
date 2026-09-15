@@ -69,6 +69,8 @@ def main(args: Args) -> None:
                     "last_frame": int(initial.frame_index[-1]),
                     "buffer_latency_ms": 180,
                     "policy_input_dim": policy.input_dim,
+                    "onnx_intra_op_threads": policy.intra_op_num_threads,
+                    "onnx_inter_op_threads": policy.inter_op_num_threads,
                 }
             ),
             flush=True,

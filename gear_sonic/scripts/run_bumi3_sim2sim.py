@@ -186,6 +186,8 @@ def main(args: Args) -> None:
         "align_reference_heading": args.align_reference_heading,
         "action_dim": contract.action_dim,
         "policy_input_dim": runner.policy_input_dim,
+        "onnx_intra_op_threads": policy.intra_op_num_threads,
+        "onnx_inter_op_threads": policy.inter_op_num_threads,
         "initialization": "paired_robot_reference" if motion.has_robot_reference else "default_robot_pose_smpl_yaw",
         "reference_kind": "paired_robot_shadow" if motion.has_robot_reference else "none",
         "policy_visual_and_collision": "direct_bumi3_xml_dynamics_model",

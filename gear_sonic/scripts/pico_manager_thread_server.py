@@ -2256,6 +2256,24 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # This process executes one SMPL sample at a time at 50 Hz.  PyTorch's
+    # workstation default (20 intra-op + 20 inter-op threads here) creates
+    # scheduler contention with the MuJoCo viewer for no useful batch
+    # throughput.  Keep a small deterministic CPU pool; CUDA kernels are not
+    # affected when --cuda is selected.
+    torch.set_num_threads(2)
+    try:
+        torch.set_num_interop_threads(1)
+    except RuntimeError:
+        # PyTorch only permits changing the inter-op pool before parallel work
+        # starts.  Standalone visualizer imports may already have initialized
+        # it, while the normal xrt publisher path has not.
+        pass
+    print(
+        f"PyTorch runtime threads: intra_op={torch.get_num_threads()}, "
+        f"inter_op={torch.get_num_interop_threads()}"
+    )
+
     # Standalone VR3Pt test modes (exit after finishing)
     if args.vr3pt_test:
         print("Running VR 3-point pose visualizer test...")
