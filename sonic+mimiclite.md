@@ -878,3 +878,213 @@ scale 和上表对不上，尤其是明显更像"BUMI2 的旧值"，这基本就
 两条路都不改变 §3 的桥接架构，只影响 §4 表格里"阶段 1"需要多长时间、由谁产出 M0。
 在明确是哪条分支之前，§4 的工期估计应视为待重新评估，不要按"复现一个已有 checkpoint"
 的乐观假设去排期。
+
+## 8. `g1_kin` 到底是什么、够不够、要不要整体重写框架（2026-09-16 补充）
+
+这一节直接回答你的两个追问：`g1_kin` 具体是什么东西、它在当前项目里能不能直接当 bridge
+用；以及"把 MimicLite 代码搬过来、整个训练框架从 0 重写"这个想法是否比我的分阶段桥接方案
+更省时间。以下代码引用都已实际打开对应文件核实，不是转述配置文件名猜的。
+
+### 8.1 `g1_kin` 是什么
+
+**是一个模型**——一个和 encoder 同构的 MLP（`[2048,1024,512,512]`，SiLU 激活），定义在
+[g1_kin_mf_mlp.yaml](gear_sonic/config/actor_critic/decoders/g1_kin_mf_mlp.yaml)，输入是
+64 维共享 token，输出是 `command_multi_future_nonflat`（= 未来若干帧的
+`[dof_pos, dof_vel]` 拼接，BUMI3 是 21 个关节）和 `motion_anchor_ori_b_mf_nonflat`
+（= anchor body 相对朝向的 6D 旋转表示）——这两个字段的具体含义是我直接读
+[`token_losses.py`](gear_sonic/trl/losses/token_losses.py:75-90) 里的注释和转换代码核实的，
+不是猜的。
+
+**在官方 SONIC 里的作用**：训练时的一个辅助正则项，不参与真正的动作输出。具体机制见
+[`G1ReconLoss.forward`](gear_sonic/trl/losses/token_losses.py:534-557)：拿真实训练动作算出的
+`tokenizer_obs`（ground truth）和 `g1_kin` 从 token 解码出的 `decoded_outputs["g1_kin"]` 做
+MSE，权重只有 `0.01`（见
+[g1_recon_and_smpl_latent.yaml](gear_sonic/config/aux_losses/universal_token/g1_recon_and_smpl_latent.yaml:12)）。
+目的很朴素：**逼 token 保留"能重建出原始动作"的信息**，防止 token 只靠对齐损失学出一个
+和动作无关的表示。这是纯监督学习（能不能重建出已知答案），不是强化学习，和旁边那个真正
+产生动作、靠 PPO 训练的 `g1_dyn` 解码器是两条独立支路，只是共享同一个 token 输入。
+
+**为什么叫 `g1_kin`**：
+- `g1` 不是指真的用了 G1 机器人资产，是历史遗留的内部键名——SONIC 最早在 Unitree G1 上开发，
+  这个命名一直沿用到 checkpoint/网络结构里没改，BUMI3 集成时特意保留了这个内部键名以兼容
+  网络结构，这一点 `BUMI3_SONIC_修改记录.md` 2026-08-26 那条记录里也明确写了
+  "内部 g1 键保留用于 SONIC 网络/checkpoint 兼容，不代表使用 G1 机器人资产"。
+- `kin` = kinematic（运动学）。与之对应的 `g1_dyn` 里 `dyn` = dynamics（动力学）。
+  两者的区别不是"哪个更懂物理"，是**训练信号的性质**：`g1_kin` 只回归关节角度/速度这些
+  运动学量，跟仿真物理、PD、接触完全无关，纯粹是"这串数字对不对"的监督学习；`g1_dyn` 输出
+  真正下发给 PD 控制器、要在仿真里承受重力接触碰撞、靠 PPO 试错学出来的动作，这是"动力学"
+  这个词在这里的含义。
+
+**它现在有没有在你的 BUMI3 项目里起到 bridge 作用**：**没有，目前和官方 SONIC 一样，只是
+训练时的内部正则项**。证据：`Actor.forward` 里 aux loss（含 `g1_kin` 的重建损失）只在
+`is_training=True` 时才计算（[actor_critic_modules.py:232-238](gear_sonic/trl/modules/actor_critic_modules.py:232)），
+推理/导出 ONNX 时这条支路大概率不会被计算或导出——也就是说，你现在 `models/deployment/`
+下已经导出的 ONNX 文件里，很可能根本不含 `g1_kin` 这部分权重，它目前只活在训练用的
+`.pt` checkpoint 里。要把它变成真正的 bridge，需要专门从 `.pt` 里单独把这部分权重取出来，
+包成一个新的、独立可调用的小模型，这是 §4 阶段 2 要做的具体工程工作，不是"已经在用了"。
+
+### 8.2 修正你的理解："是不是只需要训练 g1_kin 这一个东西"
+
+方向对，但有两点需要更精确：
+
+1. **不是从零训练，是"提取 + 按需再适配"**。当前 `sonic_bumi3.yaml` 的训练配置里
+   `g1_kin` 本来就在激活的 decoder 列表里（见
+   [all_mlp_v1_no_teleop.yaml](gear_sonic/config/actor_critic/universal_token/all_mlp_v1_no_teleop.yaml:19-20)），
+   也就是说你现在每一个 BUMI3 checkpoint（包括本地已有的 `model_step_100000`）里，其实已经
+   顺带训出了一份"token → BUMI3 运动学参考"的解码器，只是权重很小（0.01），没人专门去检验
+   过它单独拎出来够不够准。第一步应该是**先把这份现成权重的重建质量单独评一遍**（这个可以
+   离线做，见 §4 阶段 2 的停止信号），如果已经够准，可能完全不需要额外训练；如果不够准，
+   在它的基础上继续训/微调，也比从随机初始化训快得多。
+2. **它现在的输出格式不等于 MimicLite 想要的格式**，这是真正可能需要"训练"的部分。
+   `command_multi_future_nonflat` 是 SONIC 自己的内部表示（Isaac Lab DoF 顺序的
+   `[dof_pos, dof_vel]`），而且 `token_losses.py` 里有原作者自己留的注释，明确说这个字段
+   "temporal axis is incorrectly flattened"（时间轴展平有已知 bug）。MimicLite 的 `ObsRef`
+   到底要什么格式的参考（关节角度、body 位置、根朝向……具体到哪几个量、哪种坐标系），现在
+   还不知道——这正是 §2 Phase 0 里必须先拿到的信息。如果两边格式能对上，中间只是一层确定性
+   的格式转换代码（不需要训练）；如果对不上，就要在现有 `g1_kin` 基础上加一个小头或做少量
+   微调去产出 MimicLite 需要的额外量（比如它现在完全不含全局根位置/速度，如果 MimicLite 需要
+   这个，就要单独补）。**这个"到底要不要训、训多少"的问题，答案取决于 MimicLite 的观测契约，
+   现在还答不出来，不能先假设"肯定不用训"或"肯定要从零训"。**
+
+### 8.3 你的另一个想法："以 SONIC-BUMI3 为主干，把 MimicLite 代码搬过来，整个训练框架
+重新整理、从 0 训练" —— 和分阶段桥接方案比，哪个更快、更可行
+
+这个想法本质是：不搭桥接层，而是把 MimicLite 的核心技术（轻量 actor、短时域、高吞吐训练）
+直接移植进当前 SONIC_MimicLite 代码库，替换掉 `g1_dyn`，然后整个网络（encoder + token +
+新的轻量 dynamics 解码器）联合从随机初始化重新训一遍。
+
+**我的判断：现在不应该走这条路，理由不是"不可行"，是"现在做，时间和风险都不划算"，等
+分阶段桥接方案验证过后，这条路其实就是我方案里的阶段 5/6（蒸馏+联合微调）要走到的终点，
+不冲突，只是先后顺序问题。**具体原因：
+
+1. **两套训练栈用的是不同仿真后端，移植是基础设施工程，不是改改网络结构**。当前 SONIC-BUMI3
+   训练明确跑在 Isaac Lab（`conda env_isaaclab`、`isaaclab.managers.RewardTermCfg`，见
+   `sonic_bumi3.yaml:48-49`）；MimicLite 的高吞吐来源里明确包含 "mjlab 的 GPU-native MuJoCo
+   后端"（思路一 §"为什么不能简单理解成..."）。这两个不是同一个仿真器，环境 reset/step
+   接口、观测张量约定、PPO trainer 实现大概率都不一样。"把 MimicLite 代码搬过来整理进
+   SONIC 框架"意味着要么把 MimicLite 的 mjlab 环境搬进来在 Isaac Lab 之外单独跑（等于
+   两套仿真器共存，工程复杂度不小），要么把 SONIC 现在的训练环境从 Isaac Lab 迁到 mjlab
+   （意味着现在已经调好的 BUMI3 接触/PD/armature 参数——见 §7.2 那张表——大概率要在新仿真器
+   里重新调一遍，因为接触模型、solver、时间步都变了）。这一步本身可能就要以周为单位，且
+   在真正开始训练之前就要做完。
+2. **"从 0 训练"意味着放弃已经沉没的训练成本，且新框架第一次跑很难一次就对**。当前 BUMI3
+   checkpoint 已经花了 8 卡 × 3 天（约 576+ GPU-hours，见 §2）调出来；框架重写后从零训练，
+   等于这笔投入先归零，还要再承担"新框架第一次跑，PD/reward/termination 需要在新仿真器里
+   重新试错"的不确定成本——这正是这个项目过去几周大部分时间在做的事（`BUMI3_SONIC_修改记录.md`
+   里大量条目都是接触/PD/armature 反复调参），没有理由认为换个框架这部分工作量会消失。
+3. **风险会叠加，而不是被隔离**。你现在还有一个尚未解决的问题：MimicLite 在 BUMI3 上此前
+   失败过（§7）。如果现在就把 MimicLite 移植进 SONIC 框架、整体从零训练，等于同时把"框架
+   移植对不对"和"BUMI3 动力学参数有没有调对"这两个各自都可能出错的问题叠在一起做，一次
+   训练（几天）失败后很难判断到底是哪一层错了。分阶段桥接方案把这两个问题拆开：MimicLite
+   的问题在它自己已经跑通的框架里单独解决（§7 的诊断/重训不涉及 SONIC 代码），bridge 的问题
+   用便宜的离线监督训练单独验证（§4 阶段 2，不需要物理仿真，几小时出结果），出问题时能定位
+   到具体是哪一层。
+4. **分阶段桥接方案不是"绕开"融合，是"延后"融合**。§4 阶段 5/6 本来就是"蒸馏成 token 直接
+   控制"和"联合微调"，最终形态和你设想的"整合进一个训练框架"是同一个方向。区别只是：
+   我建议先用桥接版本把"SONIC token 里到底有没有 MimicLite 需要的信息""两边格式能不能对上"
+   这些最基础的问题用最便宜的方式回答清楚，再决定要不要投入更贵的框架级整合——而不是在
+   这些问题都没答案之前，就直接下场做最贵、最难回退的那个版本。
+
+**结论**：如果你的目标是尽快知道"SONIC 的 token + MimicLite 的速度"这个想法到底成不成立，
+分阶段桥接方案更快、风险更低、每一步都能验证。如果验证通过、且长期要维护一个不依赖外部
+MimicLite 代码库的统一产品，那么"整体移植进一个框架"是合理的终局目标，但建议放在 §4 阶段
+5/6，而不是现在就跳过前面所有验证直接做。
+
+## 9. Phase 0 实测审计：解压并核对两位同事的代码（2026-09-16 补充）
+
+拿到 `MimicLite_bumi2.tar.gz`（131MB，纯代码导出）和 `MimicLite_bumi3.tar.gz`（12.3GB，
+含同事整个 `home/user/zjx/active-adaptation` 工作目录）后本地解压核实（解压到仓库外的
+`/home/yingchaomu/下载/mimiclite_review/`，排除了 `venv/.cache/.uv-cache/*.pt/*.mp4`，
+不进本仓库 Git；顺手把 `*.tar.gz` 加进了 `.gitignore` 防止误提交这两个大文件）。
+
+### 9.1 两边其实是同一个框架，不是各写各的
+
+两份代码的根都是同一个上游开源框架 **`active-adaptation`**，MimicLite 是其中一个
+`projects/mimic-lite` 子项目（Git submodule，指向公开仓库），支持 **IsaacLab 和 mjlab 两种
+后端**（`pyproject-isaaclab.toml` / `pyproject-mjlab.toml` 并存）；两位同事实际训练用的都是
+**mjlab 后端**（从 `.hydra/overrides.yaml` 里的 `backend=mjlab` 实测确认）。算法库
+`mimic_lite_learning/` 里不止 PPO，还有 `ppo_roa.py`（PPO + Rapid/Robust Online Adaptation）、
+`sac.py`、`fast_sac.py`、`fast_td3.py`——同事实际用的是 `ppo_roa`（BUMI2 后期 checkpoint 文件名
+带 `_ppo_roa_`），不是纯 PPO，这点之前的三份方案都没注意到。
+
+### 9.2 推翻上一轮的"简单参数没改对"猜测
+
+上一轮我根据本仓库自己的 BUMI2→BUMI3 教训，猜测 B 同事的失败可能是"移植时漏改了几个电机
+相关参数"。实测 B 同事 BUMI3 导出的 `policy-unknown-100000.yaml`（`Bumi3TrackBaseFidelityRobust`
+任务）后，**这个猜测基本不成立**：
+
+- `action_scale`、`joint_kp`、`default_joint_pos` 与本仓库 SONIC 侧自己验证过的 BUMI3
+  参数（§7.2 表格）**逐项一致**，包括按电机差异算出来的 action scale 公式值。
+- 唯一发现的具体数值差异：踝关节 `joint_kd`，B 同事的导出是 **0.8**，本仓库 SONIC 侧验证值
+  是 **0.5**。这是一个真实、具体、可核实的差异，但只有一个孤立参数对不上，不足以解释
+  "整体效果不好"这种大范围问题，不能简单归因于"参数抄错"。
+
+### 9.3 实测到的真实情况：这是一个同事仍在攻坚的 PPO 稳定性问题，不是配置疏漏
+
+对比 `projects/mimic-lite`（git submodule）相对其上游基准提交 `089d0ad0` 的本地改动
+（`git diff --stat`：`mimic_lite_learning/ppo.py` +139/-、`scripts/train.py` +136/-，
+另有 `tasks/rewards/*.py`、`tasks/observations/track.py`、`tasks/command.py`、
+`tasks/actions.py` 的改动），以及新增的 `tests/test_stability_controls.py`，可以确认
+B 同事为 BUMI3 做了实质性的算法层稳定性工程，不是简单调参：
+
+- **PPO actor 标准差裁剪**（`actor_std_min`/`actor_std_max`）——防止探索噪声方差跑飞。
+- **checkpoint 输入维度扩展加载**（`_adapt_input_expansion_checkpoint`、VecNorm 扩展）——
+  说明他们在训练过程中扩过观测维度，还专门写了机制从旧 checkpoint 热启动到新维度，这通常是
+  "边训边发现观测不够、加东西"的典型痕迹。
+- **按关节缩放的动作变化率奖励**（`physical_action_rate_l2`，新增）——针对性抑制动作抖动。
+- **action clip 写入延迟缓冲区最新槽位**的修正——和动作延迟/抖动相关的一个具体 bug 修复。
+- 最新一条真实提交（`outer` 仓库 HEAD `c4bd19b2`）是 **"Randomize PD gains across both
+  actuator modes"**——说明截至打包时，同事最后一步还在尝试"PD 增益随机化"这个新方向，
+  大概率是这份 tarball 里**还没跑完整训练验证过**的最新尝试。
+
+同时，任务配置命名的演进（`tracking-base-bumi` → `-stable` → `-fidelity` →
+`-fidelity-robust`）和实验目录的演进（`base_repro` → `huge_8gpu` → `bumi_stable` →
+`bumi_fidelity_200k` → `bumi_easy_dance_200k`，跨度约 2026-08-06 到 08-16，10 天、多轮
+200k 步量级训练）都指向同一个结论：**这不是一次草率尝试，是同事真实投入了约两周、多轮迭代、
+带课程学习（curriculum）的持续攻坚，目前看仍未完全达到满意效果。** 这比上一轮"B 同事失败，
+可能是漏改参数"的判断要严重，也意味着 §7.3 两条分支里，"小修参数重训"这条路大概率不够，
+应该按"拿 A 同事验证过的方法论、结合 B 同事已经踩出来的坑（std 裁剪、动作率奖励、PD
+随机化方向）重新走一遍"这条更重的路径规划工期。
+
+一个交叉验证的好消息：B 同事在 BUMI2 侧还做过一次独立的 armature `0` vs `0.01` A/B 消融
+（`2026-09-10_bumi_armature_ab/result.md`），结论是"去掉 armature 会增加踝关节速度 RMS，
+但不能单独解释持续的 pitch 偏置"——这和本仓库自己在 SONIC 侧对同一问题（BUMI armature
+是否是失稳主因）的实测结论**互相印证**：armature 不是主要矛盾，两边独立踩过同一个坑、
+得到了一致的结论，值得互相引用而不必重复消融。
+
+### 9.4 集群状态与算力预估（2026-09-16 实测）
+
+两台 Noetix 服务器当前 **GPU 全部空闲**（16×RTX 4090D，利用率 0%），驱动 `550.144.03`；
+`.local/mimiclite_cluster.env` 记录 node1 系统盘仍只余约 88G，需要注意。
+
+**关键阻塞项（不是"没准备好"，是"缺一样明确的东西"）**：两台服务器都**没有** B 同事配置里
+引用的训练数据（`/data0/bumi4340_npz_score1_no_object`、
+`/data0/bumi_dance_easy_npz_20260816`）——这些路径是同事自己服务器（`server-50019`，
+`112.65.216.193`）上的本地路径，两份 tarball 都**不包含**实际训练用的 npz 动作数据，只有
+代码、配置和少量导出的部署 json。本机 `/home/yingchaomu/下载/bumi3_action_samples_10_each/`
+下有一批 `*_from_g1_bumi3.npz` 样例动作，但这是重定向到 BUMI3、按类别抽样的小样本集，
+是否是 mimic-lite 训练管线期望的确切 schema/规模，还没有核实过，不能直接当正式训练数据用。
+
+**算力预估**（基于 B 同事日志里的真实数字，`2026-08-16_mimiclite_bumi_easy_dance_200k/TRAINING_LOG.md`）：
+单节点 8 GPU、smoke 阶段 `8×512=4096` 环境、正式训练目标 **20 万 PPO update**（比我们自己
+SONIC 侧 10 万 iteration 的目标还多一倍，但两边"一个 update/iteration"代表的 batch 大小不
+一定相同，不能直接换算 GPU-hours，需要先拿到一次真实运行的 it/s 才能估准）。用同一套代码在
+Noetix 8 卡上做 1000~2000 个 update 的短程 smoke，实测每 update 墙钟时间后，再线性外推到
+20 万 update 的总时长，是目前能给出的最可靠估计方法；在实测之前给出的具体小时数都只是猜测，
+不写入这里以免误导排期。
+
+### 9.5 修正后的下一步
+
+1. **不建议现在就在真实数据上启动 20 万步正式训练**——数据没有，且刚证实这是一个同事自己
+   都还没完全解决的稳定性问题，贸然全量训练大概率复现同样的失败，浪费 GPU-hours。
+2. **可以立即开始、不依赖数据、不改变现状的事**：在 Noetix-0（或两节点分别）上按
+   `pyproject-mjlab.toml`（`uv`、Python 3.12）把这套代码环境装起来，先跑框架自带的 G1 冒烟
+   （tarball 里已经证明 G1TrackBase 在这套代码上能跑通），验证 mjlab + 这两台机器的 GPU/驱动
+   兼容，这一步能立刻做，价值是后续不管选哪条分支都用得上。
+3. **需要你决定**：BUMI3 的正式训练数据从哪来——找 B/A 同事要 `/data0` 下的真实 npz
+   （最可靠），还是先尝试用本机已有的 `bumi3_action_samples_10_each/` 抽样集跑一次小规模
+   smoke（能更快开始，但代表性和规模都不确定，可能得到误导性结论）。
+4. 数据到位后，建议顺序是：先在 Noetix 上原样复现 A 同事 BUMI2 的成功（用 bumi2 tarball，
+   验证环境和框架本身没问题、拿到真实 GPU-hours 基准），**与此同时**在另一节点上用 B 同事
+   最新代码（含 std 裁剪等稳定性修复，但补上 PD 增益随机化这一步他还没跑完）跑一次 BUMI3
+   正式训练，两边并行，8 卡 + 8 卡，不需要跨机 NCCL，互不干扰。
