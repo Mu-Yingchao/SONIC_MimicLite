@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 620" font-family="'PingFang SC','Microsoft YaHei',Helvetica,Arial,sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#333333"/>
+    </marker>
+    <marker id="arrowDashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#666666"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="620" fill="#ffffff"/>
+
+  <!-- ============ section labels ============ -->
+  <text x="90" y="30" font-size="15" font-weight="700" fill="#333">多模态输入</text>
+  <text x="330" y="30" font-size="15" font-weight="700" fill="#6a2f7a">SONIC 上层 — 原样冻结</text>
+  <text x="740" y="30" font-size="15" font-weight="700" fill="#175c24">新增桥接层 — 唯一要训练的部分</text>
+  <text x="1080" y="30" font-size="15" font-weight="700" fill="#7a3d0a">MimicLite 下层 — 借用同事，先冻结</text>
+  <text x="1360" y="30" font-size="15" font-weight="700" fill="#333">机器人</text>
+
+  <!-- section background bands -->
+  <rect x="20" y="45" width="220" height="500" fill="#BFE3F0" opacity="0.15" rx="10"/>
+  <rect x="270" y="45" width="380" height="500" fill="#E4C6EE" opacity="0.18" rx="10"/>
+  <rect x="680" y="45" width="330" height="500" fill="#BFEAC5" opacity="0.20" rx="10"/>
+  <rect x="1040" y="45" width="290" height="500" fill="#F7D9BF" opacity="0.22" rx="10"/>
+  <rect x="1360" y="45" width="100" height="500" fill="#E8E8E8" opacity="0.30" rx="10"/>
+
+  <!-- ============ 输入 ============ -->
+  <g>
+    <rect x="30" y="80" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
+    <text x="130" y="110" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">Robot 参考动作</text>
+    <text x="130" y="132" font-size="11" text-anchor="middle" fill="#0b2b36">Bumi 重定向轨迹</text>
+
+    <rect x="30" y="230" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
+    <text x="130" y="260" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">SMPL / GENMO 动作</text>
+    <text x="130" y="282" font-size="11" text-anchor="middle" fill="#0b2b36">人体动作 / 生成动作</text>
+
+    <rect x="30" y="380" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
+    <text x="130" y="410" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">PICO 五点重建</text>
+    <text x="130" y="432" font-size="11" text-anchor="middle" fill="#0b2b36">遥操作实时输入</text>
+  </g>
+
+  <!-- ============ SONIC encoders + token ============ -->
+  <g>
+    <rect x="300" y="80" width="190" height="70" rx="12" fill="#E4C6EE" stroke="#9B59B6"/>
+    <text x="395" y="108" font-size="14" text-anchor="middle" fill="#3a1747" font-weight="600">Robot encoder</text>
+    <text x="395" y="128" font-size="11" text-anchor="middle" fill="#3a1747">[2048,1024,512,512]</text>
+
+    <rect x="300" y="270" width="190" height="70" rx="12" fill="#E4C6EE" stroke="#9B59B6"/>
+    <text x="395" y="298" font-size="14" text-anchor="middle" fill="#3a1747" font-weight="600">SMPL encoder</text>
+    <text x="395" y="318" font-size="11" text-anchor="middle" fill="#3a1747">[2048,1024,512,512]</text>
+
+    <rect x="540" y="175" width="90" height="90" rx="14" fill="#E4C6EE" stroke="#9B59B6" stroke-width="2"/>
+    <text x="585" y="210" font-size="13" text-anchor="middle" fill="#3a1747" font-weight="700">共享</text>
+    <text x="585" y="228" font-size="13" text-anchor="middle" fill="#3a1747" font-weight="700">64维 token</text>
+    <text x="585" y="246" font-size="11" text-anchor="middle" fill="#3a1747">FSQ 量化</text>
+  </g>
+
+  <!-- ============ Bridge: decoder + frame ============ -->
+  <g>
+    <rect x="700" y="80" width="290" height="90" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
+    <text x="845" y="108" font-size="14" text-anchor="middle" fill="#0d3315" font-weight="700">参考动作解码器（g1_kin 式）</text>
+    <text x="845" y="128" font-size="11" text-anchor="middle" fill="#0d3315">token → 显式 Bumi 参考动作</text>
+    <text x="845" y="146" font-size="11" text-anchor="middle" fill="#0d3315">joint_pos / joint_vel / body_pos+quat / root</text>
+
+    <rect x="700" y="230" width="290" height="80" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
+    <text x="845" y="260" font-size="14" text-anchor="middle" fill="#0d3315" font-weight="700">当作一条合法参考动作</text>
+    <text x="845" y="280" font-size="11" text-anchor="middle" fill="#0d3315">可用现有 sim2sim 工具直接回放核验</text>
+
+    <rect x="710" y="420" width="270" height="80" rx="12" fill="#BFEAC5" stroke="#3FA34D" stroke-dasharray="5,4"/>
+    <text x="845" y="450" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="600">离线 / sim2sim 评测</text>
+    <text x="845" y="470" font-size="11" text-anchor="middle" fill="#0d3315">重建误差 · 追踪误差 · 跌倒率</text>
+  </g>
+
+  <!-- ============ MimicLite ============ -->
+  <g>
+    <rect x="1050" y="80" width="270" height="80" rx="12" fill="#F7D9BF" stroke="#D2782B"/>
+    <text x="1185" y="110" font-size="14" text-anchor="middle" fill="#5a2a05" font-weight="700">ObsRef 观测构造</text>
+    <text x="1185" y="130" font-size="11" text-anchor="middle" fill="#5a2a05">短历史 + 短未来窗口（同事原实现）</text>
+
+    <rect x="1050" y="230" width="270" height="80" rx="12" fill="#F7D9BF" stroke="#D2782B"/>
+    <text x="1185" y="260" font-size="14" text-anchor="middle" fill="#5a2a05" font-weight="700">MimicLite Actor</text>
+    <text x="1185" y="280" font-size="11" text-anchor="middle" fill="#5a2a05">轻量 MLP，PD 接口</text>
+  </g>
+
+  <!-- ============ Robot ============ -->
+  <g>
+    <rect x="1370" y="235" width="90" height="70" rx="12" fill="#E8E8E8" stroke="#888888"/>
+    <text x="1415" y="263" font-size="13" text-anchor="middle" fill="#222" font-weight="700">Bumi</text>
+    <text x="1415" y="283" font-size="11" text-anchor="middle" fill="#222">本体</text>
+  </g>
+
+  <!-- ============ arrows ============ -->
+  <!-- inputs -> encoders -->
+  <path d="M230,115 L296,115" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M230,265 L296,265" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M230,415 C 270,415 270,300 296,300" stroke="#333" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrowDashed)" fill="none"/>
+
+  <!-- encoders -> token -->
+  <path d="M490,120 C 515,140 520,170 545,195" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M490,300 C 515,280 520,255 545,235" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- token -> decoder -->
+  <path d="M630,215 C 665,190 670,150 696,125" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- decoder -> frame -->
+  <path d="M845,170 L845,226" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- frame -> ObsRef -->
+  <path d="M990,270 C 1015,270 1020,150 1046,130" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- ObsRef -> Actor -->
+  <path d="M1185,160 L1185,226" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- Actor -> Robot -->
+  <path d="M1320,270 L1366,270" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+
+  <!-- Robot -> ObsRef feedback -->
+  <path d="M1415,233 C 1415,190 1300,110 1322,110" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
+  <text x="1420" y="195" font-size="10" fill="#666">状态反馈</text>
+
+  <!-- eval taps -->
+  <path d="M845,310 L845,416" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
+  <path d="M1200,310 C 1200,400 1000,430 984,440" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
+
+  <!-- ============ legend ============ -->
+  <g font-size="12" fill="#333">
+    <rect x="30" y="530" width="18" height="18" fill="#BFE3F0" stroke="#4488AA"/>
+    <text x="54" y="544">输入（不变）</text>
+    <rect x="180" y="530" width="18" height="18" fill="#E4C6EE" stroke="#9B59B6"/>
+    <text x="204" y="544">SONIC 上层（冻结）</text>
+    <rect x="380" y="530" width="18" height="18" fill="#BFEAC5" stroke="#3FA34D"/>
+    <text x="404" y="544">桥接层（新增训练）</text>
+    <rect x="580" y="530" width="18" height="18" fill="#F7D9BF" stroke="#D2782B"/>
+    <text x="604" y="544">MimicLite 下层（冻结）</text>
+    <rect x="800" y="530" width="18" height="18" fill="#E8E8E8" stroke="#888888"/>
+    <text x="824" y="544">机器人本体</text>
+    <text x="950" y="544">- - - 虚线 = 反馈 / 评测核验</text>
+  </g>
+</svg>

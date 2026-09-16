@@ -629,6 +629,15 @@ flowchart TD
 "短历史 + 短未来 + 轻量 actor + PD"的下层结构。图中用色块区分**冻结/复用/新增**三类模块，
 这是两篇论文各自的图都没有的信息，是本方案需要额外强调的部分：
 
+![SONIC 上层 + MimicLite 下层混合架构链路图](media/sonic_mimiclite_bridge.png)
+
+> 上图是渲染好的 PNG 静态图片（`media/sonic_mimiclite_bridge.png`），双击/任何图片查看器都能
+> 直接打开；VSCode 里需要点开 Markdown 的 **Preview** 视图（右上角图标或 `Ctrl+Shift+V`）才会
+> 内联显示图片，单纯用文本编辑器打开 `.md` 文件是看不到任何图片的，这一点对下面的 Mermaid
+> 代码块同样成立。源文件是同目录下的 `media/sonic_mimiclite_bridge.svg`（矢量图，可再导出更高
+> 分辨率）。下面的 Mermaid 代码块是同一张图的可编辑源码，只在支持 Mermaid 的渲染器（GitHub、
+> 装了 Mermaid 插件的 VSCode Preview）里会额外再显示一次；只看上面的 PNG 即可，不用两个都看。
+
 ```mermaid
 flowchart LR
     classDef input fill:#BFE3F0,stroke:#4488AA,stroke-width:1px,color:#0b2b36;
@@ -786,3 +795,86 @@ BUMI2 资产。如果审计发现同事的实现和本仓库 BUMI3 契约（关�
 2. Phase 0 期间，是否并行启动"阶段1'"（当前 SONIC-BUMI3 同条件基线评测），反正当前两台
    服务器都空闲（见 [PROJECT_STATUS.md](PROJECT_STATUS.md)），可以先用已有 `model_step_100000` 系列
    checkpoint 把基线指标跑出来，不等同事资料到位。
+
+## 7. 重要修正：MimicLite 在 BUMI2 / BUMI3 上的结果不对称（2026-09-16 补充）
+
+你补充了一个关键事实，前面 §0-§6（含思路一、思路二）都建立在一个现在不成立的假设上，
+必须先修正结论，再继续往下走：
+
+- 有两位同事分别做过 MimicLite 迁移：**A 同事把 MimicLite 迁到 BUMI2，效果好、收敛快**；
+  **B 同事把 MimicLite 迁到 BUMI3，效果不好**。
+- BUMI2 与 BUMI3 是同尺寸机型，但**换了电机**，导致 URDF、质量/惯量、执行器力矩-速度特性
+  不同——这正是本仓库自己 SONIC 侧 BUMI2→BUMI3 迁移时踩过的坑（见下方对照）。
+- 也就是说：**目前并不存在一个"效果好、可以直接冻结借用"的 MimicLite-BUMI3 策略**。
+  之前 §2 Phase 0 里"审计同事 MimicLite-BUMI 的 commit/checkpoint，验证后冻结使用"这个步骤，
+  隐含假设了"存在一份成功的 BUMI3 checkpoint"，这个假设不成立，必须修正。
+
+### 7.1 这是否推翻了 §3 的架构方案？—— 不推翻，但推翻了 Phase 0/1 的任务内容
+
+§3 的链路图讨论的是"SONIC 的 token 和 MimicLite 的追踪器之间怎么接"，这个接口关系跟
+"MimicLite-BUMI3 这个下层策略具体是从哪个 checkpoint 来的"是两件独立的事——**架构结论不变，
+继续坚持**。真正需要改的是 §2（Phase 0）和 §4 表格里"阶段 1"的具体任务内容和工期预期：
+原计划是"复现同事效果"（假设几天内可以对齐一个已验证的 checkpoint），现在必须先花时间
+**产出**一个能用的 MimicLite-BUMI3 低层策略，这一步本身可能就要经历一到两轮训练迭代，
+不是简单的"复现"。
+
+### 7.2 回答你的问题：现在该用哪位同事的东西，还是自己改
+
+**两位同事的东西都要，但用途不同，都不能直接拿来部署：**
+
+1. **A 同事（BUMI2，成功）的代码 = 拿"方法论骨架"**，不是拿 checkpoint。他的训练配方
+   （observation 设计、reward、termination、PPO 超参、mjlab/加速手段）是目前唯一被验证
+   "在这类机型上能快速收敛"的实现，价值在于复用这套配方本身。但他在 BUMI2 上训出来的
+   checkpoint 不能直接部署到 BUMI3——两者电机不同，动力学不同，直接上会大概率不稳/不准，
+   跟"把 BUMI2 资产误当成 BUMI3 用"是同一类错误，本仓库已经因为这类错误返工过一次
+   （`BUMI3_SONIC_修改记录.md` 2026-08-26）。
+2. **B 同事（BUMI3，失败）的代码 = 拿"失败样本"做诊断**，不是拿来接着训。一份已经跑失败
+   的 BUMI3 尝试，诊断价值往往比再重新摸索一遍更高——因为它已经把"哪条路走不通"这件事
+   做完了，你只需要去弄清楚"为什么不通"。这一步成本很低（读配置、对比参数），值得优先做，
+   不要跳过直接推倒重来。
+
+**具体做法：把 B 同事的 BUMI3 配置，和本仓库自己 SONIC 侧已验证的 BUMI3 执行器参数逐项 diff。**
+本仓库 2026-08-26 那次 BUMI2→BUMI3 迁移，已经把正确的 BUMI3 执行器参数验证并记录下来
+（`gear_sonic/envs/manager_env/robots/bumi3.py`，来源 `bumi.py` SHA256 已锁定），可以直接当作
+"标准答案"去对照：
+
+| 关节组 | effort | velocity | KP | KD | armature |
+|---|---:|---:|---:|---:|---:|
+| leg yaw | 12 | 12 | 20 | 1.0 | 未启用 |
+| leg roll / pitch | 50 | 12 | 45 | 3.0 | 未启用 |
+| knee pitch | 50 | 12 | 45 | 2.0 | 未启用 |
+| waist yaw | 27 | 9 | 53 | 3.4 | 未启用 |
+| ankle pitch | 9 | 12 | 8 | 0.5 | 0.012574 |
+| ankle roll | 9 | 12 | 8 | 0.5 | 0.009608 |
+| arm pitch/roll/yaw + elbow | 4 | 12 | 8 | 0.4 | 未启用 |
+
+action scale 按 `0.25 × effort_limit_sim / stiffness` 公式生成（leg yaw `0.15`、leg
+roll/pitch/knee `0.2778`、waist yaw `0.1274`、ankle `0.28125`、arm/elbow `0.125`），
+**不是手写常量**——如果 B 同事的实现里 action scale 是手写死数字而不是随执行器参数联动计算，
+换电机后很容易漏改。
+
+同一次记录里还有一个非常具体的真实先例，可以直接当"重点嫌疑对象"去查 B 同事的配置：
+> arms `velocity_limit_sim` 从参考仓库旧值 `30` 改成了 BUMI3 正确值 `12`。
+
+这说明"关节力矩/速度上限"这类强依赖电机型号的参数，在 BUMI2→BUMI3 迁移时**已知会变**，
+且极容易被漏改——如果 B 同事的失败 BUMI3 配置里某些关节的 effort/velocity/KP/KD/action
+scale 和上表对不上，尤其是明显更像"BUMI2 的旧值"，这基本就是失败的直接原因，修正成本很低。
+
+### 7.3 决策分支
+
+拿到 B 同事的配置、做完上面的 diff 之后，按结果分两条路，不要预设结论：
+
+- **若差异集中在可枚举的物理/控制参数**（PD、力矩/速度上限、action scale、质量/惯量、
+  armature）——大概率是"移植时漏改电机相关参数"，直接在 B 同事现有代码上修正这些字段、
+  重新训一版，性价比最高，优先做这条。
+  这一路的产出直接就是 §4 表格里的"M0：MimicLite-BUMI3 基线"。
+- **若差异不止于物理参数**（reward/termination 假设不成立、数据质量问题、或 A 同事配方里
+  某些依赖 BUMI2 特有动力学的设计在 BUMI3 上结构性不适用）——放弃修补 B 同事的实现，改为
+  以 A 同事的框架代码为骨架，参照本仓库已经趟出来的 BUMI3 资产链路（URDF/MJCF/关节映射/
+  执行器参数，见上表和 §7.2 引用的 SHA256 锁定资产）重新做一次完整移植。
+  这仍然是"借用 A 同事验证过的方法论"，不是从官方 MimicLite 从零开始，工作量比第一条路
+  大，但比"重新发明 MimicLite"小得多。
+
+两条路都不改变 §3 的桥接架构，只影响 §4 表格里"阶段 1"需要多长时间、由谁产出 M0。
+在明确是哪条分支之前，§4 的工期估计应视为待重新评估，不要按"复现一个已有 checkpoint"
+的乐观假设去排期。
