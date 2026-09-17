@@ -3924,3 +3924,137 @@ tmux new-session -d -s tensorboard_bumi3_three_source \
 - 本轮未启动 Isaac Lab GUI、未重训、未进行人工 GUI 或实机验收；训练函数数值一致性、MuJoCo 动力学及键盘队列路径为已执行检查。原8卡训练在同步前 PID/启动 tick/cwd/命令均与上轮一致，服务器同分支 HEAD 6ba4ef3，工作区干净。
 - 功能提交 `a7592c9ea9b713809de44de5214547ca62d5b4ee` 已推送 GitHub 当前分支；noetix-volc 同分支通过 `git pull --ff-only` 从 6ba4ef3 快进到该提交，工作区干净。5 个相关 Python 文件静态编译通过，相关源码及 XML/YAML 指纹与本地一致。同步前后 launcher 3269510（start_ticks=964046165）和八个 worker 3269523～3269530（start_ticks=964046505）的 PID、启动 tick、cwd 和完整命令逐项完全一致，输出 `SERVER_SMPL_ENTRY_SYNC_PASS`。后续仅追加审计记录，不改变已经验证的实现。
 - 测试与传输关键证据已归档后，确认本线程执行进程结束，并检查可读进程的 cmdline/cwd/fd 无目录引用，仅清理精确专用目录 `/tmp/bumi-smpl-entry-20260910-uIz0Bc`（158 文件，618252 bytes），输出 `TASK_TEMP_CLEANUP_PASS`。正式十对数据、旧五对、模型、测试源码和用户 g1.tar.gz 保留。该临时路径此后仅作历史来源记录。
+
+## 2026-09-17：新增 BUMI2 原生 SONIC 机器人集成（目标机型切换，非 BUMI3 修改）
+
+### 1. 背景、授权范围与分支保护
+
+- 用户与 Claude 在 `sonic+mimiclite.md` 完成多轮方案讨论后明确决定：把 SONIC + MimicLite
+  融合方案的落地目标从 BUMI3 切换为 **BUMI2**。原因是同事已经在 BUMI2 上用 MimicLite 训出
+  效果好的追踪策略（`MimicLite_bumi2.tar.gz`），而 BUMI3 一侧的 MimicLite 尝试（`MimicLite_bumi3.tar.gz`）
+  实测仍是同事本人尚未攻克的 PPO 稳定性问题，不具备可直接借用的下层策略；相关审计记录见
+  `sonic+mimiclite.md` 第 9 节。
+- 本次改动**不修改任何 BUMI3 现有代码、资产或配置**，只新增 BUMI2 的独立文件和注册项，
+  BUMI3 的默认行为、契约和已训练 checkpoint 不受影响。
+- 起始分支：从最新 `main`（HEAD `90dfc3dd416297427595160d243d81759495bb3a`，工作区除历史
+  遗留的未跟踪《Yuanjie 服务器通过 SSH RemoteForward 使用本地 Clash 操作指南》外干净，
+  与 `origin/main` 领先/落后均为 0）创建 `feature/bumi2-sonic-migration`，本次全部改动在该
+  分支完成。
+
+### 2. BUMI2 参考来源与版本状态
+
+唯一机器人参数来源：同事提供的 `MimicLite_bumi2.tar.gz` 内
+`active-adaptation/active_adaptation/assets/BUMI/BM2-V2.0/`，这是同事已经用 MimicLite
+训出好效果（`BumiV2TrackBase` checkpoint 15000/25000/33000/39000）的那份 BUMI2 权威机器人
+定义，不是凭空假设或从公开库另取的参数。
+
+- `bumi.py`（BUMI2 Python 机器人配置）SHA256：
+  `c47c3706d352f7b5c9bb533bfcb5f8631f1c7a21117b04c93e59c0804d518e91`。
+- `urdf/bumi_v2_0904_rl_collision.urdf` SHA256：
+  `b595f0060015944eb489c4a5b3d36f6d7914399bb326f55a97ae5de0afef0f13`。
+- `mjcf/bumi_v2_0810_rl.xml` SHA256：
+  `14cc43828ff038dfae7b40d77d5a56b4ee234d9be32f3319f190038cd1507005`。
+
+`MimicLite_bumi2.tar.gz`/`MimicLite_bumi3.tar.gz` 均未纳入本仓库版本控制（体积 131MB/12.3GB，
+且含同事私有代码），`.gitignore` 已在此前提交追加 `*.tar.gz` 防止误提交；两份 tarball 解压
+审计的完整过程见 `sonic+mimiclite.md` 第 9 节，不在此重复。
+
+### 3. 关键结论：BUMI2 与 BUMI3 关节/刚体排列顺序完全一致，执行器数值明显不同
+
+逐项核实（不是假设）：
+
+- BUMI2 的 21 个关节名称、MuJoCo 关节顺序（`mjcf` 里 `<joint>` 出现顺序）、Isaac Lab 关节顺序
+  （`bumi.py:BUMI_21DOF_NAMES`）与本仓库 BUMI3 的对应顺序**逐项相同**。因此
+  `BUMI2_ISAACLAB_TO_MUJOCO_DOF`/`BUMI2_MUJOCO_TO_ISAACLAB_DOF` 等映射数组与 BUMI3 的数值
+  完全一致（均已用不依赖 Isaac Lab 的纯 Python 提取校验，见第 5 节），但代码里独立生成、
+  独立断言，不直接复用 BUMI3 的变量，避免两个机器人模块产生隐性耦合。
+- 执行器数值（力矩、速度、KP、KD、armature）与 BUMI3 明显不同，与用户所述"同尺寸、换了
+  电机"一致。典型例子：踝关节力矩上限 BUMI2 约 32.4N·m，BUMI3 仅 9N·m，相差约 3.6 倍；
+  waist_yaw 的 KP/KD，BUMI2 为 80/4.0，BUMI3 为 53/3.4。
+- `BUMI2_ACTION_SCALE` **没有**采用 BUMI3 那种 `0.25 * effort_limit_sim / stiffness`
+  实时公式。原因：用该公式套用 `bumi.py` 的 effort/stiffness 算出的值，和同事真实训练并
+  导出的 `BumiV2TrackBase` checkpoint 39000 部署配置（`.../scripts/exports/BumiV2TrackBase/
+  20260915_155635_..._checkpoint_39000_mimic_lite_ppo_d5288034a376_deploy.yaml`）里的逐关节
+  实测 action_scale 对不上（例如 leg_yaw 公式算出 0.225，实际部署值是 0.45；leg_roll 与
+  leg_pitch 公式算出的比例相同，但实际部署值分别是 0.35 和 0.45）。为避免把一个已知对不上
+  的公式当成事实，改为直接把该 deploy.yaml 的逐关节实测值抄成字面常量，这份差异的具体
+  原因（同事训练时是否用了另一套公式或手工调整）尚未查证，已在代码注释中说明。
+
+### 4. 新增文件
+
+- `gear_sonic/data/assets/robot_description/urdf/bumi2/bumi.urdf`：复制自上述 URDF，
+  mesh 相对路径由 `../meshes/*.STL` 改为 `../../meshes/bumi2/*.STL`（与 BUMI3 目录约定一致），
+  关节 origin/axis/limit 等数值不修改。
+- `gear_sonic/data/assets/robot_description/meshes/bumi2/*.STL`：复制 BM2-V2.0 全部 22 个
+  mesh 文件，文件名与 URDF 引用逐一核对存在。
+- `gear_sonic/data/assets/robot_description/mjcf/bumi2.xml`：复制自 `bumi_v2_0810_rl.xml`
+  （不是无碰撞/无物理参数的 `BM2-V2.0.xml` 精简版），`meshdir` 改为 `../meshes/bumi2/`，
+  关节顺序核实与 BUMI3 的 MuJoCo 顺序约定一致。
+- `gear_sonic/envs/manager_env/robots/bumi2.py`（SHA256
+  `3a18f723a96a2b022b70247425f2ab1cd742799b0a6e30ac4607cda210b3dba6`）：镜像 `bumi3.py` 的
+  完整结构，含独立生成并断言的 DOF/Body 顺序映射、`BUMI2_CFG`（`ImplicitActuatorCfg`，
+  不使用延迟执行器，与 BUMI3 的简化方式一致）、`BUMI2_ACTION_SCALE`（见第 3 节说明）。
+- `gear_sonic/config/exp/manager/universal_token/all_modes/sonic_bumi2.yaml`：以
+  `sonic_bumi3.yaml` 为模板，机器人类型/资产文件名改为 bumi2，`dynamics_gate` 的逐关节速度
+  上限改为 BUMI2 真实执行器上限（noetix_4308 约 15.9977 rad/s / noetix_5014 约
+  13.8567 rad/s），其余 reward/termination/body 名称沿用 BUMI3 数值（body 命名相同，
+  termination 阈值尚未用 BUMI2 真实数据核实，已在文件内注释标注）。本入口的训练目标是
+  让 Robot/SMPL 双编码器 + FSQ token + `g1_kin` 重建解码器收敛，不是训出可部署的完整
+  `g1_dyn` 策略（该策略角色由同事的 MimicLite-BUMI2 承担），因此未在配置里写死一个短的
+  `num_learning_iterations`，需要训练时人工盯 aux loss 曲线决定何时停止。
+
+### 5. 修改文件
+
+- `gear_sonic/envs/manager_env/robots/__init__.py`：新增 `from ...robots.bumi2 import *`。
+- `gear_sonic/envs/manager_env/modular_tracking_env_cfg.py`：`robot_mapping` 新增
+  `"bumi2"` 条目（`BUMI2_CFG`/`BUMI2_ACTION_SCALE`/`BUMI2_ISAACLAB_TO_MUJOCO_MAPPING`），
+  G1/H2/BUMI3 现有条目不变。
+- `gear_sonic/trl/utils/order_converter.py`：新增 `Bumi2Converter`（结构与 `Bumi3Converter`
+  逐字段对应，延迟导入 `robots.bumi2`），`get_order_converter` 工厂新增 `"bumi2"` 分支，
+  G1/H2/BUMI3 分支不变。
+- `gear_sonic/envs/manager_env/mdp/commands.py`：`_validated_lower_joint_indices` 新增
+  `robot_type.lower() == "bumi2"` 分支，断言下肢 MuJoCo 索引固定为 `9..20`（与 BUMI3 相同，
+  因为关节排列顺序一致），BUMI3 分支不变。
+
+### 6. 实际运行的验证与结果
+
+- `python3 -m py_compile` 对 5 个新增/修改 Python 文件全部通过，输出 `PY_COMPILE_OK`。
+- `sonic_bumi2.yaml` 用 `yaml.safe_load` 解析通过，`robot.type=bumi2`、
+  `asset.assetFileName=bumi2.xml` 字段核实正确。
+- `bumi2.py` 里不依赖 `isaaclab` 的部分（名称表、`_target_order_indices`、映射数组、断言）
+  已单独提取到隔离命名空间执行，`BUMI2_ISAACLAB_TO_MUJOCO_DOF`/`BUMI2_MUJOCO_TO_ISAACLAB_DOF`/
+  `BUMI2_LOWER_JOINT_INDICES_MUJOCO` 的计算结果与文件内硬编码的断言值逐项一致，且与
+  `bumi3.py` 对应断言值完全相同，验证了第 3 节"排列顺序一致"的结论。
+- `xml.etree.ElementTree` 解析 `bumi2/bumi.urdf` 和 `mjcf/bumi2.xml` 均无语法错误；用正则
+  提取 URDF 引用的全部 `.STL` mesh 路径，逐一核实本地文件存在，无缺失。
+- `find` 核实复制的 mesh 文件数为 22，与 URDF 引用数量一致。
+
+### 7. 未运行/未验证项与原因（明确列出，不得混称已通过）
+
+- **未在 Isaac Lab 中实际实例化 `BUMI2_CFG` 或 `ArticulationCfg`**：本机没有 Isaac Lab 运行
+  环境（`PROJECT_STATUS.md` 已记录两台 Noetix 服务器目前也缺 `.venv`），无法在本地或服务器
+  完成真正的仿真加载验证；这一步必须在 Noetix-9 的 Python/Isaac Lab 环境就绪后补做，且要
+  作为正式训练前的强制前置检查，不能跳过。
+- **未运行 1-env reset/step smoke、未做训练 smoke、未跑任何一步实际训练**：本次改动仅完成
+  资产迁移和代码注册，数据准备（BUMI2 npz + soma_uniform BVH → SONIC motion-lib 格式的
+  转换/对齐/筛选脚本）尚未开始，是下一步工作，当前不具备起训条件。
+- **`sonic_bumi2.yaml` 的 termination 阈值（根高度 0.40m 等）未用 BUMI2 真实数据核实**，
+  是沿用 BUMI3 数值的假设值，已在文件注释中标注，需要第一次训练时重新确认。
+- **`BUMI2_ACTION_SCALE` 与 effort/stiffness 公式对不上的具体原因未查证**，只是如实记录了
+  差异并采用了实测值，没有向同事求证训练时实际使用的计算方式。
+- **未新增 BUMI2 的 MuJoCo sim2sim/部署工具**（对应 BUMI3 的 `bumi3_sim2sim.py`、
+  `bumi3_motion_dataset.py`、`run_bumi3_sim2sim.py` 等）：这属于桥接/部署阶段的工作，本次
+  训练迁移阶段不需要，按 `sonic_mimiclite_new.md` 的分阶段计划推迟到桥接验证阶段再做。
+
+### 8. 兼容性、已知风险与回滚
+
+- BUMI3、G1、H2 的现有代码路径、配置文件、已训练 checkpoint 均未被本次改动触碰；
+  `robot_mapping`、`get_order_converter`、`_validated_lower_joint_indices` 的改动均为新增
+  `elif`/字典分支，不改变已有分支的行为。
+- 已知风险：`BUMI2_ACTION_SCALE` 的来源解释不完整（见第 7 节），如果同事那边实际使用的
+  是另一套逐关节公式而不是简单的字面常量，当前实现在数值上仍然正确（因为直接抄的是同一个
+  实测值），但如果后续需要根据不同力矩/刚度重新推导 action_scale（例如换一版执行器参数），
+  现有代码不会自动更新，需要人工重新核对。
+- 回滚方法：本次改动全部集中在 `feature/bumi2-sonic-migration` 分支的独立新增文件和
+  局部 `elif`/字典分支，`git revert` 对应提交或直接删除该分支即可完全回滚，不影响 `main`
+  或任何 BUMI3 相关代码。

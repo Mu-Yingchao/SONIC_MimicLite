@@ -1,0 +1,290 @@
+# @package _global_
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+# BUMI2 原生 SONIC 训练入口。本配置以 sonic_bumi3.yaml 为模板改造，只把
+# 机器人切到 BUMI2（`gear_sonic/envs/manager_env/robots/bumi2.py`），关节/
+# 刚体命名和排列顺序与 BUMI3 完全一致，因此 `commands.body_names`、
+# `reward_point_body`、`vr_3point_body`、terminations 里引用的 body 名称
+# 原样保留，不需要跟着改。dynamics_gate 的逐关节速度上限已改成 BUMI2 真实的
+# 执行器速度上限（不是照抄 BUMI3 的数值）。
+#
+# 与 BUMI3 版本的一个重要区别：这次训练的目标不是练出可部署的完整策略,
+# 而是给 SONIC 的 Robot/SMPL 双编码器 + FSQ token + g1_kin 重建解码器
+# （"上层"）找到一个用 BUMI2 数据收敛的状态，真正执行动作的
+# `g1_dyn` 解码器最终会被同事已经训好的 MimicLite-BUMI2 策略取代，不会
+# 部署。因此本入口在 num_learning_iterations 上不必照搬 BUMI3 的 100000
+# 步，应该在训练时盯着 g1_recon / g1_smpl_latent / reencoded_smpl_g1_latent
+# 这几个 aux loss，收敛后就可以提前停，具体停在多少轮还没有实测数据，
+# 不在配置里写死一个短的 `num_learning_iterations`，避免造成"这个数字已经
+# 验证过"的误导；仍沿用 `ppo_im_phc.yaml` 的默认 100000 上限作为安全上界，
+# 由运行时人工判断何时停止。
+# BUMI2 termination 的根高度/末端误差阈值暂时原样沿用 BUMI3 的数值（两者
+# 初始姿态和根部高度标定一致），尚未用 BUMI2 真实数据核实过是否需要单独
+# 调整，第一次实际训练时需要重新确认。
+# 训练 motion/SMPL 路径必须由 CLI 显式提供，避免把 BUMI3 或 G1 数据误用于
+# BUMI2。
+
+defaults:
+  - /algo: ppo_im_phc
+  - /manager_env: base_env
+  - /callbacks/read_eval
+  - /callbacks/im_resample
+  - /aux_losses: universal_token/g1_recon_and_smpl_latent
+  - override /trainer: trl_ppo_aux
+  - override /actor_critic: universal_token/all_mlp_v1_no_teleop
+  - override /manager_env/observations/tokenizer: unitoken_robot_smpl_noz
+  - override /manager_env/observations/policy: local_dir_hist
+  - override /manager_env/observations/critic: privileged_mf_hist
+  - override /manager_env/events: tracking/level0_4
+  - override /manager_env/terminations: tracking/base_adaptive_strict_ori_foot_xyz
+  - override /manager_env/rewards: tracking/base_no_local_keypoint_no_anti_shake_feet_acc
+
+use_manager_env: true
+
+exp_base: ${hydra:runtime.choices.exp}
+exp_var: test
+experiment_name: ${exp_base}_${exp_var}
+experiment_dir: ${base_dir}/${project_name}/${experiment_name}-${timestamp}
+
+num_envs: 4096
+project_name: TRL_BUMI2_Track
+
+actor_prop_history_length: 10
+actor_actions_history_length: 10
+critic_prop_history_length: 10
+critic_actions_history_length: 10
+
+manager_env:
+  rewards:
+    feet_acc:
+      weight: -2.5e-6
+    torque_limits:
+      _target_: isaaclab.managers.RewardTermCfg
+      func: gear_sonic.envs.manager_env.mdp:applied_torque_limits_by_ratio
+      weight: -0.01
+      params:
+        asset_cfg:
+          _target_: isaaclab.managers.SceneEntityCfg
+          name: "robot"
+          joint_names: [".*"]
+        limit_ratio: 0.85
+    undesired_contacts:
+      params:
+        sensor_cfg:
+          body_names:
+            - "^(?!l_ankle_roll_link$)(?!r_ankle_roll_link$)(?!l_elbow_pitch_link$)(?!r_elbow_pitch_link$).+$"
+
+  events:
+    # 沿用 BUMI3 的随机化范围：COM/质量扰动只作用于腰部 yaw 连杆，踝关节
+    # armature 与 KP/KD 随机化继续关闭，避免同时引入额外训练变量。
+    base_com:
+      params:
+        asset_cfg:
+          body_names: "waist_yaw_link"
+    randomize_rigid_body_mass:
+      params:
+        asset_cfg:
+          body_names: "waist_yaw_link"
+        mass_distribution_params: [0.8, 1.2]
+        operation: "scale"
+    randomize_ankle_armature: null
+    randomize_actuator_gains: null
+
+  terminations:
+    anchor_pos:
+      params:
+        # 原样沿用 BUMI3 的阈值，两者初始姿态和根部高度标定一致；未用
+        # BUMI2 真实数据核实过，第一次训练需要重新确认是否需要调整。
+        threshold: 0.12
+        down_threshold: 0.25
+        root_height_threshold: 0.40
+    foot_pos_xyz:
+      params:
+        threshold: 0.20
+        body_names:
+          - "l_ankle_roll_link"
+          - "r_ankle_roll_link"
+    ee_body_pos:
+      params:
+        threshold: 0.20
+        down_threshold: 0.40
+        root_height_threshold: 0.40
+        body_names:
+          - "l_elbow_pitch_link"
+          - "r_elbow_pitch_link"
+
+  config:
+    robot:
+      type: bumi2
+    terrain_type: trimesh
+
+  commands:
+    motion:
+      anchor_body: "base_link"
+      body_names:
+        [
+          "base_link",
+          "waist_yaw_link",
+          "l_arm_roll_link",
+          "l_elbow_pitch_link",
+          "r_arm_roll_link",
+          "r_elbow_pitch_link",
+          "l_leg_roll_link",
+          "l_knee_pitch_link",
+          "l_ankle_roll_link",
+          "r_leg_roll_link",
+          "r_knee_pitch_link",
+          "r_ankle_roll_link",
+        ]
+      reward_point_body:
+        [
+          "waist_yaw_link",
+          "l_elbow_pitch_link",
+          "r_elbow_pitch_link",
+        ]
+      reward_point_body_offset:
+        [
+          [0.0, 0.0, 0.0],
+          [0.0, 0.0, 0.0],
+          [0.0, 0.0, 0.0],
+        ]
+      vr_3point_body:
+        ["l_elbow_pitch_link", "r_elbow_pitch_link", "base_link"]
+      vr_3point_body_offset:
+        [
+          [0.0, 0.0, 0.0],
+          [0.0, 0.0, 0.0],
+          [0.0, 0.0, 0.0],
+        ]
+      num_future_frames: 10
+      dt_future_ref_frames: 0.1
+      smpl_num_future_frames: 10
+      smpl_dt_future_ref_frames: 0.02
+      cat_upper_body_poses: true
+      cat_upper_body_poses_prob: 0.5
+      freeze_frame_aug: true
+      teleop_sample_prob_when_smpl: 0.0
+      randomize_wrist_poses: false
+      motion_lib_num_dof: 21
+
+      motion_lib_cfg:
+        upper_body_augment_prefixes:
+          [
+            "2025",
+            "sonic_mixed_walking_running",
+            "sonic_squating_different_height_switching",
+            "sonic_running",
+            "sonic_walking",
+            "sonic_squating_different_height_hold",
+            "sonic_walking_other_style",
+            "balance",
+          ]
+        adaptive_sampling:
+          enable: true
+          uniform_sampling_rate: 0.9
+          adp_samp_failure_rate_max_over_mean: 200
+          # 动力学门禁只检查原始参考关节轨迹。速度上限改成 BUMI2 真实的
+          # noetix_4308（约 15.9977 rad/s）/ noetix_5014（约 13.8567 rad/s）
+          # 执行器上限，来自 gear_sonic/envs/manager_env/robots/bumi2.py，
+          # 不是照抄 BUMI3 的 12.0/9.0。
+          dynamics_gate:
+            enable: true
+            dof_names:
+              [
+                "waist_yaw_joint",
+                "l_arm_pitch_joint",
+                "l_arm_roll_joint",
+                "l_arm_yaw_joint",
+                "l_elbow_pitch_joint",
+                "r_arm_pitch_joint",
+                "r_arm_roll_joint",
+                "r_arm_yaw_joint",
+                "r_elbow_pitch_joint",
+                "l_leg_pitch_joint",
+                "l_leg_roll_joint",
+                "l_leg_yaw_joint",
+                "l_knee_pitch_joint",
+                "l_ankle_pitch_joint",
+                "l_ankle_roll_joint",
+                "r_leg_pitch_joint",
+                "r_leg_roll_joint",
+                "r_leg_yaw_joint",
+                "r_knee_pitch_joint",
+                "r_ankle_pitch_joint",
+                "r_ankle_roll_joint",
+              ]
+            dof_velocity_limits:
+              waist_yaw_joint: 13.8567
+              l_arm_pitch_joint: 15.9977
+              l_arm_roll_joint: 15.9977
+              l_arm_yaw_joint: 15.9977
+              l_elbow_pitch_joint: 15.9977
+              r_arm_pitch_joint: 15.9977
+              r_arm_roll_joint: 15.9977
+              r_arm_yaw_joint: 15.9977
+              r_elbow_pitch_joint: 15.9977
+              l_leg_pitch_joint: 13.8567
+              l_leg_roll_joint: 13.8567
+              l_leg_yaw_joint: 15.9977
+              l_knee_pitch_joint: 13.8567
+              l_ankle_pitch_joint: 15.9977
+              l_ankle_roll_joint: 15.9977
+              r_leg_pitch_joint: 13.8567
+              r_leg_roll_joint: 13.8567
+              r_leg_yaw_joint: 15.9977
+              r_knee_pitch_joint: 13.8567
+              r_ankle_pitch_joint: 15.9977
+              r_ankle_roll_joint: 15.9977
+            max_velocity_exceedance_fraction: 0.005
+            max_velocity_ratio: 2.0
+            max_acceleration_ratio: 1.0
+          quarantine:
+            enable: true
+            min_global_success_rate: 0.20
+            high_failure_rate: 0.90
+            min_motion_episodes: 5.0
+            min_new_motion_episodes: 3.0
+            consecutive_evaluations: 3
+        motion_file: null
+        smpl_motion_file: null
+        exclude_motion_keys: []
+        paired_frame_alignment:
+          mode: trim_trailing
+          max_frame_delta: 2
+        smpl_y_up: true
+        asset:
+          assetFileName: "bumi2.xml"
+        robot_type: "bumi2"
+        wrist_mujoco_dof_indices: []
+
+algo:
+  config:
+    actor_learning_rate: 2e-5
+    critic_learning_rate: 1e-3
+    empty_cache_every_n_ppo_epoch: -1
+    num_steps_per_env: 24
+    use_clampped_std: true
+    std_clamp_min: 0.001
+    std_clamp_max: 0.5
+    max_grad_norm: 0.1
+    actor:
+      backbone:
+        reencode_smpl_g1_recon: true
+        encoders:
+          g1:
+            inputs: ["command_multi_future_nonflat", "motion_anchor_ori_b_mf_nonflat"]
+          smpl:
+            inputs:
+              [
+                "smpl_joints_multi_future_local_nonflat",
+                "smpl_root_ori_b_multi_future",
+              ]
+        decoders:
+          g1_kin:
+            outputs: ["command_multi_future_nonflat", "motion_anchor_ori_b_mf_nonflat"]
+
+    critic:
+      backbone:
+        module_config_dict:
+          layer_config:
+            hidden_dims: [2048, 2048, 1024, 1024, 512, 512]

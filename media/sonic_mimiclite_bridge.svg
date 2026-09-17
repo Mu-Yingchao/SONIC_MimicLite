@@ -12,10 +12,10 @@
 
   <!-- ============ section labels ============ -->
   <text x="90" y="30" font-size="15" font-weight="700" fill="#333">多模态输入</text>
-  <text x="330" y="30" font-size="15" font-weight="700" fill="#6a2f7a">SONIC 上层 — 原样冻结</text>
+  <text x="330" y="30" font-size="15" font-weight="700" fill="#6a2f7a">SONIC 上层 — 新训练（复用 BUMI3 经验）</text>
   <text x="740" y="30" font-size="15" font-weight="700" fill="#175c24">新增桥接层 — 唯一要训练的部分</text>
-  <text x="1080" y="30" font-size="15" font-weight="700" fill="#7a3d0a">MimicLite 下层 — 借用同事，先冻结</text>
-  <text x="1360" y="30" font-size="15" font-weight="700" fill="#333">机器人</text>
+  <text x="1050" y="30" font-size="14" font-weight="700" fill="#7a3d0a">MimicLite-BUMI2 下层 — 借用同事，冻结</text>
+  <text x="1380" y="30" font-size="15" font-weight="700" fill="#333">BUMI2</text>
 
   <!-- section background bands -->
   <rect x="20" y="45" width="220" height="500" fill="#BFE3F0" opacity="0.15" rx="10"/>
@@ -28,7 +28,7 @@
   <g>
     <rect x="30" y="80" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
     <text x="130" y="110" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">Robot 参考动作</text>
-    <text x="130" y="132" font-size="11" text-anchor="middle" fill="#0b2b36">Bumi 重定向轨迹</text>
+    <text x="130" y="132" font-size="11" text-anchor="middle" fill="#0b2b36">BUMI2 重定向轨迹</text>
 
     <rect x="30" y="230" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
     <text x="130" y="260" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">SMPL / GENMO 动作</text>
@@ -59,7 +59,7 @@
   <g>
     <rect x="700" y="80" width="290" height="90" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
     <text x="845" y="108" font-size="14" text-anchor="middle" fill="#0d3315" font-weight="700">参考动作解码器（g1_kin 式）</text>
-    <text x="845" y="128" font-size="11" text-anchor="middle" fill="#0d3315">token → 显式 Bumi 参考动作</text>
+    <text x="845" y="128" font-size="11" text-anchor="middle" fill="#0d3315">token → 显式 BUMI2 参考动作</text>
     <text x="845" y="146" font-size="11" text-anchor="middle" fill="#0d3315">joint_pos / joint_vel / body_pos+quat / root</text>
 
     <rect x="700" y="230" width="290" height="80" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
@@ -78,14 +78,14 @@
     <text x="1185" y="130" font-size="11" text-anchor="middle" fill="#5a2a05">短历史 + 短未来窗口（同事原实现）</text>
 
     <rect x="1050" y="230" width="270" height="80" rx="12" fill="#F7D9BF" stroke="#D2782B"/>
-    <text x="1185" y="260" font-size="14" text-anchor="middle" fill="#5a2a05" font-weight="700">MimicLite Actor</text>
+    <text x="1185" y="260" font-size="14" text-anchor="middle" fill="#5a2a05" font-weight="700">MimicLite-BUMI2 Actor</text>
     <text x="1185" y="280" font-size="11" text-anchor="middle" fill="#5a2a05">轻量 MLP，PD 接口</text>
   </g>
 
   <!-- ============ Robot ============ -->
   <g>
     <rect x="1370" y="235" width="90" height="70" rx="12" fill="#E8E8E8" stroke="#888888"/>
-    <text x="1415" y="263" font-size="13" text-anchor="middle" fill="#222" font-weight="700">Bumi</text>
+    <text x="1415" y="263" font-size="13" text-anchor="middle" fill="#222" font-weight="700">BUMI2</text>
     <text x="1415" y="283" font-size="11" text-anchor="middle" fill="#222">本体</text>
   </g>
 
@@ -127,11 +127,11 @@
     <rect x="30" y="530" width="18" height="18" fill="#BFE3F0" stroke="#4488AA"/>
     <text x="54" y="544">输入（不变）</text>
     <rect x="180" y="530" width="18" height="18" fill="#E4C6EE" stroke="#9B59B6"/>
-    <text x="204" y="544">SONIC 上层（冻结）</text>
+    <text x="204" y="544">SONIC 上层（新训练）</text>
     <rect x="380" y="530" width="18" height="18" fill="#BFEAC5" stroke="#3FA34D"/>
     <text x="404" y="544">桥接层（新增训练）</text>
     <rect x="580" y="530" width="18" height="18" fill="#F7D9BF" stroke="#D2782B"/>
-    <text x="604" y="544">MimicLite 下层（冻结）</text>
+    <text x="604" y="544">MimicLite-BUMI2 下层（冻结）</text>
     <rect x="800" y="530" width="18" height="18" fill="#E8E8E8" stroke="#888888"/>
     <text x="824" y="544">机器人本体</text>
     <text x="950" y="544">- - - 虚线 = 反馈 / 评测核验</text>

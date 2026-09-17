@@ -284,6 +284,57 @@ class Bumi3Converter(IsaacLabMuJoCoConverter):
         return [mujoco_names.index(name) for name in self.FOOT_BODY_NAMES]
 
 
+class Bumi2Converter(IsaacLabMuJoCoConverter):
+    """BUMI2 的 Isaac Lab/MuJoCo 关节与刚体顺序转换器。
+
+    BUMI2 与 BUMI3 的关节/刚体命名和排列顺序完全一致（详见
+    ``gear_sonic/envs/manager_env/robots/bumi2.py`` 顶部说明），因此本类
+    结构与 ``Bumi3Converter`` 逐字段对应，只是从 ``robots.bumi2`` 延迟导入，
+    避免与 BUMI3 模块产生变量级耦合；两者的执行器数值（力矩/PD/armature）
+    并不相同，顺序映射相同不代表可以共用同一份机器人配置。
+    """
+
+    VR_3POINTS_BODY_NAMES = [
+        "l_elbow_pitch_link",
+        "r_elbow_pitch_link",
+        "base_link",
+    ]
+    FOOT_BODY_NAMES = ["l_ankle_roll_link", "r_ankle_roll_link"]
+
+    def __init__(self):
+        from gear_sonic.envs.manager_env.robots.bumi2 import (
+            BUMI2_ISAACLAB_BODY_NAMES,
+            BUMI2_ISAACLAB_TO_MUJOCO_BODY,
+            BUMI2_ISAACLAB_TO_MUJOCO_DOF,
+            BUMI2_LOWER_JOINT_INDICES_MUJOCO,
+            BUMI2_MUJOCO_TO_ISAACLAB_BODY,
+            BUMI2_MUJOCO_TO_ISAACLAB_DOF,
+        )
+
+        self.JOINT_NAMES = BUMI2_ISAACLAB_BODY_NAMES
+        self.DOF_MAPPINGS = {
+            ("isaaclab", "mujoco"): BUMI2_ISAACLAB_TO_MUJOCO_DOF,
+            ("mujoco", "isaaclab"): BUMI2_MUJOCO_TO_ISAACLAB_DOF,
+        }
+        self.BODY_MAPPINGS = {
+            ("isaaclab", "mujoco"): BUMI2_ISAACLAB_TO_MUJOCO_BODY,
+            ("mujoco", "isaaclab"): BUMI2_MUJOCO_TO_ISAACLAB_BODY,
+        }
+        self.LOWER_JOINT_INDICES_MUJOCO = BUMI2_LOWER_JOINT_INDICES_MUJOCO
+
+    @property
+    def vr_3points_mujoco_indices(self):
+        """返回 BUMI2 三个跟踪点在完整 MuJoCo body 顺序中的索引。"""
+        mujoco_names = [self.JOINT_NAMES[i] for i in self.isaaclab_to_mujoco_body]
+        return [mujoco_names.index(name) for name in self.VR_3POINTS_BODY_NAMES]
+
+    @property
+    def foot_mujoco_indices(self):
+        """返回 BUMI2 双脚在完整 MuJoCo body 顺序中的索引。"""
+        mujoco_names = [self.JOINT_NAMES[i] for i in self.isaaclab_to_mujoco_body]
+        return [mujoco_names.index(name) for name in self.FOOT_BODY_NAMES]
+
+
 def get_order_converter(robot_type: str | None = None) -> IsaacLabMuJoCoConverter:
     """按机器人类型创建顺序转换器，缺省保持原 G1 行为。"""
 
@@ -293,6 +344,7 @@ def get_order_converter(robot_type: str | None = None) -> IsaacLabMuJoCoConverte
         "g1_model_12_dex": G1Converter,
         "h2": H2Converter,
         "bumi3": Bumi3Converter,
+        "bumi2": Bumi2Converter,
     }
     if normalized_type not in converter_types:
         supported = ", ".join(sorted(converter_types))
