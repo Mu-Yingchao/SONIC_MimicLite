@@ -173,4 +173,27 @@
       <geom name="base_link_visual" type="mesh" mesh="base_link_visual_mesh" group="2" contype="0" conaffinity="0" density="0" rgba="0.698039215686274 0.698039215686274 0.698039215686274 1" pos="0 0 0" euler="0 0 0" />
     </body>
   </worldbody>
+  <actuator>
+    <motor name="waist_yaw_joint" joint="waist_yaw_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_arm_pitch_joint" joint="l_arm_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_arm_roll_joint" joint="l_arm_roll_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_arm_yaw_joint" joint="l_arm_yaw_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_elbow_pitch_joint" joint="l_elbow_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_arm_pitch_joint" joint="r_arm_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_arm_roll_joint" joint="r_arm_roll_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_arm_yaw_joint" joint="r_arm_yaw_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_elbow_pitch_joint" joint="r_elbow_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_leg_pitch_joint" joint="l_leg_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_leg_roll_joint" joint="l_leg_roll_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_leg_yaw_joint" joint="l_leg_yaw_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_knee_pitch_joint" joint="l_knee_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_ankle_pitch_joint" joint="l_ankle_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="l_ankle_roll_joint" joint="l_ankle_roll_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_leg_pitch_joint" joint="r_leg_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_leg_roll_joint" joint="r_leg_roll_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_leg_yaw_joint" joint="r_leg_yaw_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_knee_pitch_joint" joint="r_knee_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_ankle_pitch_joint" joint="r_ankle_pitch_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+    <motor name="r_ankle_roll_joint" joint="r_ankle_roll_joint" gear="1" ctrllimited="true" ctrlrange="-200 200"/>
+  </actuator>
 </mujoco>

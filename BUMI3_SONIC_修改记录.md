@@ -4046,7 +4046,111 @@ tmux new-session -d -s tensorboard_bumi3_three_source \
   `bumi3_motion_dataset.py`、`run_bumi3_sim2sim.py` 等）：这属于桥接/部署阶段的工作，本次
   训练迁移阶段不需要，按 `sonic_mimiclite_new.md` 的分阶段计划推迟到桥接验证阶段再做。
 
-### 8. 兼容性、已知风险与回滚
+## 2026-09-19：Noetix-9 训练环境搭建、BUMI2 数据集构建与 1-env smoke 通过
+
+### 1. 背景与授权范围
+
+- 承接 2026-09-17 的 BUMI2 集成，本次完成 `sonic_mimiclite_new.md` §8 下一步清单的第 2～4 项：
+  Noetix-9 训练环境、BUMI2 数据准备脚本、1-env smoke。分支仍为
+  `feature/bumi2-sonic-migration`。
+- Isaac Sim/Isaac Lab 安装涉及 NVIDIA Omniverse EULA，已在对话中获用户明确授权
+  （`OMNI_KIT_ACCEPT_EULA=YES`）才执行安装。
+
+### 2. Noetix-9 训练环境（不产出可提交的仓库文件，记录过程供复现）
+
+- 环境装在 `/data0/sonic_mimiclite_env`（新挂载 2TB 盘，不占用只剩 88G 的系统盘），
+  用 `uv` 管理，Python **3.10.12**（不是仓库文档写的 3.11——实测 `isaacsim==4.5.0`
+  的 wheel 只有 `cp310` 标签，3.11 装不上，文档假设过时，未同步修改文档）。
+- `torch==2.5.1+cu124` → 后被 Isaac Lab 自身安装脚本覆盖为 `torch==2.7.0+cu128`；
+  实测驱动 550.144.03 对 cu128 仍 `torch.cuda.is_available()=True`，未观察到不兼容。
+- `isaacsim[all,extscache]==4.5.0`、Isaac Lab `v2.3.2`（commit
+  `37ddf626871758333d6ed89cf64ad702aef127d0`，克隆到 `/data0/IsaacLab`）、
+  `gear_sonic[training]`。`check_environment.py --training` 除"Python 需 3.11"这一条
+  已知过时假设外全部通过（Isaac Lab/CUDA/PyTorch/hydra/trl/transformers/accelerate/
+  wandb 均 `[+]`）。
+- 实测踩过三个环境问题，均已解决：
+  1. `uv venv` 默认不带 pip/setuptools，`isaaclab` 的依赖 `flatdict` 构建时需要
+     `pkg_resources`，需要先装 `setuptools` 并对该包使用
+     `--no-build-isolation-package flatdict`。
+  2. `isaacsim`/`isaaclab` 的 `pxr`（USD）绑定只有在 Isaac Sim 的 SimulationApp 真正
+     启动后才可 import，独立离线脚本不能直接 `import isaaclab`——这是
+     `prepare_bumi2_sonic_dataset.py` 不 import `gear_sonic.envs.manager_env.robots.bumi2`
+     的直接原因（见第 3 节）。
+  3. IsaacLab headless 训练用的 Kit 体验文件（`/data0/IsaacLab/apps/isaacsim_4_5/
+     isaaclab.python.headless.kit`）默认没有把 `isaacsim.asset.importer.urdf` 列进
+     `[dependencies]`，而 BUMI2/BUMI3 都用 `UrdfFileCfg` 实时转换 URDF，因此手动在该
+     文件里补了一行 `"isaacsim.asset.importer.urdf" = {}`。这是对 `/data0/IsaacLab`
+     本地克隆的修改，不在本仓库版本控制范围内，服务器如果重新克隆 Isaac Lab 需要
+     重新打这个补丁，此处如实记录以便复现。
+- 另外给本地 `/data0/IsaacLab/source/isaaclab/isaaclab/sim/converters/urdf_converter.py`
+  打了一个小补丁：`ImportConfig.set_merge_fixed_ignore_inertia` 是新版 URDF importer
+  （2.4.31+）才有的方法，我们实际装到的是 `isaacsim.asset.importer.urdf==2.3.10`，
+  没有这个方法；改成 `hasattr` 判断后跳过，不影响 `set_merge_fixed_joints` 的真实合并
+  行为。同样是对 `/data0/IsaacLab` 本地克隆的修改，不在本仓库范围内。
+
+### 3. 新增 `gear_sonic/tools/prepare_bumi2_sonic_dataset.py`
+
+- 不是 `prepare_bumi3_sonic_dataset.py` 的直接改造：后者绑定一个特定上游
+  `genmo.bumi_music.v1` `.pt`+manifest 契约（本仓库不产生这个中间态）。本工具的真实
+  输入是已经实测核实过结构的两份数据：
+  - Robot：`bumi_v2_filtered/**/*_from_g1_bumi_v2.npz`（同事重定向产物），字段
+    `joint_pos/joint_vel[T,21]`、`body_pos_w/body_quat_w[T,22,3或4]`、`fps`。实测确认
+    `joint_pos` 是 Isaac Lab 关节顺序（用 `l_arm_roll_joint`/`r_arm_roll_joint` 的已知
+    限位边界值 `-0.0872`/`0.0872` 精确核对第 9/10 列）、`body_quat_w` 是 wxyz、已经是
+    50Hz、根高度范围 0.46～0.47m 与参考根高一致，数据来自 Isaac Lab rollout，不存在
+    需要足底穿地优化修正的坐标系问题（因此没有照搬 BUMI3 脚本里那套 MuJoCo FK
+    Root-Z 优化器）。
+  - SMPL：直接复用同事服务器 `/data/ouqin/datasets/bumi3/train/smpl` 上已经对齐筛选好
+    的 97,660 条最终态 PKL（`pose_aa/transl/smpl_joints/fps=50.0`），按去掉
+    `_from_g1_bumi_v2` 后缀的文件名和 Robot 配对，帧数不一致的降级为 robot-only 而不是
+    报错或插值凑数。抽样 `Idle_Left_001__A017` 核对两边帧数都是 3827，完全一致；
+    97,660 条里 93,822 条（96.1%）能配对上。
+- Robot 侧转换成 SONIC 目标契约（`root_trans_offset/pose_aa/dof/root_rot/fps`）：
+  `root_trans_offset`=`body_pos_w[:,0,:]`；`root_rot`=`body_quat_w[:,0,:]` 从 wxyz 转
+  xyzw；`dof`=`joint_pos` 按 Isaac Lab→MuJoCo 顺序重排（顺序表内联在脚本里，不
+  import `bumi2.py`，见第 2 节第 2 条原因）；`pose_aa` 用根四元数转 axis-angle + 21 个
+  单自由度关节各自"轴×角度"直接算，来自当前 BUMI2 MJCF 独立解析的 joint axis
+  （不依赖 `body_quat_w` 其余 21 个 body，避免额外引入父子相对姿态换算的出错点）。
+- 转换正确性验证：20 条小样本抽查后，逐值核对了根位置、四元数换算、21 个关节重排序，
+  与原始 npz 精确匹配（bit-exact，非近似）；pose_aa 单关节轴角模长与 dof 绝对值精确
+  相等。全量构建：`robot=114995, paired=93822, robot_only=21173`，`validate` 子命令
+  全量核对通过（`BUMI2_SONIC_DATASET_VALIDATE=PASS (114995 条)`）。
+- 输出落在 Noetix-9 `/data0/bumi2_sonic_dataset_v1/built/{robot_all,smpl_all}`，
+  磁盘占用后 `/data0` 剩余约 1.5TB。
+
+### 4. `gear_sonic/data/assets/robot_description/mjcf/bumi2.xml` 补充 `<actuator>` 段
+
+- 2026-09-17 迁移时复制的源文件（`bumi_v2_0810_rl.xml`）是纯运动学导出，没有
+  `<actuator>` 段。训练时 `gear_sonic/utils/motion_lib/torch_humanoid_batch.py` 直接
+  读 `tree.getroot().find("actuator").getchildren()` 会因为 `None` 报错。按
+  `bumi3.xml` 的格式补了 21 个 `<motor>`，`gear="1" ctrllimited="true"
+  ctrlrange="-200 200"` 对全部关节相同（和 BUMI3 一样是占位值，不代表真实力矩限制，
+  真实 PD/力矩仍由 `bumi2.py` 的 `BUMI2_CFG` 在运行时提供），关节顺序与 body 遍历顺序
+  （即 `prepare_bumi2_sonic_dataset.py` 里内联的 MuJoCo 顺序）逐项一致。
+
+### 5. 实际运行的验证与结果
+
+- `check_environment.py --training`：除已知过时的 Python 3.11 断言外全部通过。
+- 数据集全量 build 后台任务：`BUMI2_SONIC_DATASET_BUILD=PASS`，最终计数
+  `robot=114995, paired=93822, robot_only=21173`；`validate` 命令重新计算并核对，
+  `BUMI2_SONIC_DATASET_VALIDATE=PASS (114995 条)`。
+- 1-env smoke（`num_envs=16, headless=True, ++algo.config.num_learning_iterations=5`,
+  `motion_lib_cfg.motion_file`/`smpl_motion_file` 指向上面构建的数据集）：
+  `SMOKE_EXIT:0`。真实打印了 reward/motion 跟踪误差/自适应采样等训练指标，
+  `Total episodes: 80, Total timesteps: 1920`。`motion_failure_rate_mean≈0.9977`
+  （随机初始化策略几乎全部失败）与 BUMI3 侧记录的冷启动预热行为一致，是预期现象，
+  不是错误。测试产物（`logs_rl/.../sonic_bumi2_test-*`、`/data0/bumi2_sonic_dataset_test`）
+  已在记录完成后清理。
+
+### 6. 未运行/未验证项
+
+- 未跑 8 卡正式训练（下一步）；未验证 aux loss 实际收敛所需轮数；未做 NCCL/多卡
+  smoke（单机 8 卡走的是 `accelerate` DDP，不是跨机场景，暂不需要）。
+- `/data0/IsaacLab` 上的两处本地补丁（urdf importer 扩展启用、`ImportConfig` 方法
+  hasattr 判断）只存在于 Noetix-9 这一份克隆里，没有上游 issue 追踪，如果之后重新
+  `git clone` Isaac Lab 或换一台服务器，需要按第 2 节重新打上。
+
+### 7. 兼容性、已知风险与回滚
 
 - BUMI3、G1、H2 的现有代码路径、配置文件、已训练 checkpoint 均未被本次改动触碰；
   `robot_mapping`、`get_order_converter`、`_validated_lower_joint_indices` 的改动均为新增
