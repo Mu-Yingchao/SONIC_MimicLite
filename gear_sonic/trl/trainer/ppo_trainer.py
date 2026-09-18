@@ -2073,10 +2073,9 @@ class TRLPPOTrainer(PPOTrainer):  # noqa: F405
                         minibatch_idx += 1  # noqa: SIM113
                         # del everything and empty cache
                         # fmt: off
-                    # if self.empty_cache_every_n_ppo_epoch > 0 and (ppo_epoch_idx + 1) % self.empty_cache_every_n_ppo_epoch == 0:  # noqa: E501
-                    #     # print(f"Empty cache at ppo_epoch_idx {ppo_epoch_idx}")
-                    #     gc.collect()
-                    #     torch.cuda.empty_cache()
+                    if self.empty_cache_every_n_ppo_epoch > 0 and (ppo_epoch_idx + 1) % self.empty_cache_every_n_ppo_epoch == 0:  # noqa: E501
+                        gc.collect()
+                        torch.cuda.empty_cache()
             ######################################################### Sync Running Mean Std #########################################################  # noqa: E501
             with common.Timer("sync_running_mean_std"):
                 self.sync_running_mean_std()

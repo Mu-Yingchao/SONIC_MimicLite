@@ -261,7 +261,14 @@ algo:
   config:
     actor_learning_rate: 2e-5
     critic_learning_rate: 1e-3
-    empty_cache_every_n_ppo_epoch: -1
+    # BUMI2 在 24GB 显存的 8 卡节点上实测出现按 iteration 累积增长的显存占用
+    # （4096/3072/2048 envs 都在训练 2~4 个 iteration 后 OOM，且 OOM 时的显存
+    # 占用量与 num_envs 关系很弱），说明问题不是 envs 数太大，而是
+    # ppo_trainer.py 里被注释掉的周期性 empty_cache 机制原本就是为这种情况
+    # 设计的（BUMI3 训练时从未需要触发，所以原样保留 -1）。这里改成每个
+    # ppo_epoch 后都清一次缓存，用少量同步开销换取显存稳定，之后如果确认
+    # 训练吞吐明显受影响，可以按需调大这个数字重新测。
+    empty_cache_every_n_ppo_epoch: 1
     num_steps_per_env: 24
     use_clampped_std: true
     std_clamp_min: 0.001
