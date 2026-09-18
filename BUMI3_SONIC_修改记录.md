@@ -4142,10 +4142,8 @@ tmux new-session -d -s tensorboard_bumi3_three_source \
   不是错误。测试产物（`logs_rl/.../sonic_bumi2_test-*`、`/data0/bumi2_sonic_dataset_test`）
   已在记录完成后清理。
 
-### 6. 未运行/未验证项
+### 6. 未运行/未验证项（本节内容已被同日第二段记录部分推翻，见下方新记录）
 
-- 未跑 8 卡正式训练（下一步）；未验证 aux loss 实际收敛所需轮数；未做 NCCL/多卡
-  smoke（单机 8 卡走的是 `accelerate` DDP，不是跨机场景，暂不需要）。
 - `/data0/IsaacLab` 上的两处本地补丁（urdf importer 扩展启用、`ImportConfig` 方法
   hasattr 判断）只存在于 Noetix-9 这一份克隆里，没有上游 issue 追踪，如果之后重新
   `git clone` Isaac Lab 或换一台服务器，需要按第 2 节重新打上。
@@ -4162,3 +4160,82 @@ tmux new-session -d -s tensorboard_bumi3_three_source \
 - 回滚方法：本次改动全部集中在 `feature/bumi2-sonic-migration` 分支的独立新增文件和
   局部 `elif`/字典分支，`git revert` 对应提交或直接删除该分支即可完全回滚，不影响 `main`
   或任何 BUMI3 相关代码。
+
+## 2026-09-19（续）：8 卡正式训练首次启动即 OOM，定位并修复按 iteration 累积的显存增长
+
+### 1. 背景
+
+- 承接上一段记录，数据集和环境就绪后，在 Noetix-9 上用 `accelerate launch
+  --num_processes=8` + `sonic_bumi2.yaml` 启动 8 卡正式训练
+  （`motion_file`/`smpl_motion_file` 指向 `/data0/bumi2_sonic_dataset_v1/built/
+  {robot_all,smpl_all}`，`base_dir=/data0/bumi2_sonic_runs`，其余沿用配置默认值
+  `num_envs=4096`）。仍在分支 `feature/bumi2-sonic-migration`。
+
+### 2. 现象与排查过程
+
+- 第一次尝试（`num_envs=4096`）在 Learning iteration 3 开始前 `torch.OutOfMemoryError`：
+  GPU 0 上该 rank 自身用了 20.92GiB/23.64GiB，另外 7 个其它 rank 各在 GPU 0 上留了
+  378MiB 的"影子" CUDA context（NCCL/torch 多进程的正常行为，不是本次问题的根因）。
+- 降到 `num_envs=3072` 重试，在 Learning iteration 3 开始前同样 OOM，崩溃时的显存占用
+  （约 21GB）与 4096 那次几乎相同。
+- 降到 `num_envs=2048` 重试，撑到 Learning iteration 5 开始前才 OOM，崩溃显存占用仍然
+  约 21GB。
+- 三次结果连起来看，`num_envs` 每降低 25%~50%，能多撑 1～2 个 iteration，但崩溃时的
+  绝对显存占用几乎不随 `num_envs` 变化——这说明瓶颈不是"env 数太多导致单次前向/反向
+  显存不够"，而是**训练过程中存在按 iteration 累积、与 num_envs 基本无关的显存增长**，
+  只是 num_envs 越大每个 iteration 本身占用的"底座"越高，越早触顶。
+- 排除了几个可能：
+  - `commands.py` 里 `max_num_load_motions` 在 `use_paired_motions=False`（本项目和
+    BUMI3 都是默认值）时恒为 `min(num_envs, 1024)`，三次尝试的 num_envs 都
+    ≥1024，所以三次实际加载的运动库大小是同一个常数 1024，不是运动库随 num_envs
+    变化导致的假象。
+  - `motion_lib_base.py` 的 quarantine/adaptive_sampling 代码只在已加载的 1024 条
+    运动上调整采样概率，不会重新调用 `load_motions()` 换入新一批运动轨迹张量，排除
+    "动作库运行时被重复整批换入导致旧张量未释放"这个猜测。
+  - 在 `gear_sonic/trl/trainer/ppo_trainer.py` 里找到根因：训练循环里原本设计了一个
+    按 `ppo_epoch` 周期性 `gc.collect()` + `torch.cuda.empty_cache()` 的清理点（由
+    `algo.config.empty_cache_every_n_ppo_epoch` 配置项开关，`> 0` 才触发），但实际
+    调用语句在两处都被注释掉了（其中一处旁边留有注释"Skip pre-iteration GC here;
+    motion loading performs fallback cleanup, which avoids extra synchronization
+    overhead and improves training speed"）。文件顶部 `import gc  # noqa: F401`
+    的 `noqa: F401`（抑制"未使用的 import"告警）从侧面印证了这段调用确实处于被
+    禁用状态。`sonic_bumi3.yaml`/`sonic_bumi2.yaml` 都把这个配置项设成 `-1`
+    （关闭），BUMI3 训练至今没有顶到过这个坑，所以这行死代码一直没人发现。
+
+### 3. 修复内容
+
+- `gear_sonic/trl/trainer/ppo_trainer.py`：取消注释训练循环里按 `ppo_epoch` 周期性
+  清理显存的调用（`if self.empty_cache_every_n_ppo_epoch > 0 and ...: gc.collect();
+  torch.cuda.empty_cache()`）。这个改动本身对所有其它实验（BUMI3/G1 等）**无行为
+  变化**：它们的 `empty_cache_every_n_ppo_epoch` 仍是默认/显式的 `-1`（关闭），触发
+  条件恒为假。
+- `gear_sonic/config/exp/manager/universal_token/all_modes/sonic_bumi2.yaml`：仅把
+  BUMI2 这一份配置的 `algo.config.empty_cache_every_n_ppo_epoch` 从 `-1` 改成 `1`
+  （每个 ppo_epoch 后都清一次），并加中文注释说明原因和判断依据，避免以后误以为是
+  随手调的数字。`sonic_bumi3.yaml` 未改动。
+- 提交 `7e244a2`（分支 `feature/bumi2-sonic-migration`），已推送并同步到 Noetix-9。
+
+### 4. 验证结果
+
+- 修复后用 `num_envs=3072` 在 Noetix-9 上重新启动 8 卡训练（`base_dir=
+  /data0/bumi2_sonic_runs`，wandb 项目 `TRL_BUMI2_Track`，`use_wandb` 默认开启，
+  实测 `/root/.netrc` 已有 `api.wandb.ai` 凭据，entity `llistao`）。
+- 全程用独立的 `nvidia-smi --query-gpu=memory.used` 轮询（20 秒一次）与训练日志并行
+  记录做交叉验证：跑到 Learning iteration 48（`Total episodes: 1179648`）时零
+  Traceback/OOM，8 张卡的显存占用在约 10.3～13.5GiB 区间内波动，没有随 iteration
+  数单调上升的趋势，与修复前"每个 iteration 净增、直到顶满 23.64GiB"的模式明显不同。
+  Iteration 48 的训练指标（`Mean rewards`、`Env/Episode_Reward/*`、
+  `Env/Metrics/motion/*`、`Env/adp_samp/*`）均为合理数值，
+  `motion_failure_rate_mean≈0.9992`，与 1-env smoke 观察到的冷启动几乎全部失败一致，
+  是预期现象。
+- 尚未验证：长时间（数百~数千 iteration）运行是否会出现更缓慢的二次增长趋势；
+  `g1_recon`/`g1_smpl_latent`/`reencoded_smpl_g1_latent` 等 aux loss 的具体收敛
+  轮数（需要持续观察 wandb 曲线，是这次训练接下来的主要监控目标）。
+
+### 5. 兼容性
+
+- `ppo_trainer.py` 的改动是恢复一段配置驱动、原本就存在但被注释掉的代码路径，不修改
+  任何默认行为；BUMI3/G1 等其它实验的实际执行路径不受影响。
+- `sonic_bumi2.yaml` 的改动只影响 BUMI2 这一个实验入口。
+- 回滚方法同上：`git revert` 提交 `7e244a2` 或删除
+  `feature/bumi2-sonic-migration` 分支即可完全撤销。
