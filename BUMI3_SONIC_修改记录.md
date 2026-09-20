@@ -4239,3 +4239,114 @@ tmux new-session -d -s tensorboard_bumi3_three_source \
 - `sonic_bumi2.yaml` 的改动只影响 BUMI2 这一个实验入口。
 - 回滚方法同上：`git revert` 提交 `7e244a2` 或删除
   `feature/bumi2-sonic-migration` 分支即可完全撤销。
+
+## 2026-09-20：发现并修复共享代码 `torch_humanoid_batch.py` 的关节错位 bug，已训 checkpoint 全部作废重训
+
+### 1. 背景
+
+- 用户要求验证"BUMI2 上层训练是否已经练到可用于桥接的质量"，方法是把训练 checkpoint
+  的 encoder→token→g1_kin decoder 单独跑一次推理，同已训练策略实际输出的显式动作，去和
+  同事刚提供的 BUMI2 部署包（`MimicLite_bumi2_deploy.zip`，含真实的
+  `*_from_g1_bumi_v2_deploy.json` 动作文件、ROS `AcController.cpp` 部署代码）里对应
+  同一条源动作（`walk_forward_loop_003__A022`）的真实文件做数值对比。
+- 验证过程中发现的问题比"重建质量够不够"严重得多：**活体训练环境里，参考关节角度
+  本身就是错的**，不是模型学得不够好。已立即停止 Noetix-9 上跑了约 44 小时（约 22000
+  个 iteration）的 8 卡训练，分支仍是 `feature/bumi2-sonic-migration`。
+
+### 2. 根因（与 BUMI2/BUMI3/机型是否"成熟"无关，是一个此前从未被触发过的共享代码 bug）
+
+- 排查路径：先确认了 `gear_sonic/tools/prepare_bumi2_sonic_dataset.py` 生产的离线
+  PKL 数据集（`root_trans_offset`/`root_rot`/`dof`）与同事真实部署 JSON 逐位精确匹配
+  （bit-exact，float32 精度），排除了离线数据转换管线的问题。
+- 但活体 IsaacLab 训练环境里，`motion_lib`**不是**直接读 PKL 预先算好的 `dof` 字段，
+  而是通过 `gear_sonic/utils/motion_lib/torch_humanoid_batch.py` 的 `HumanoidBatch`
+  类从 `pose_aa` 现场用正向动力学重新计算 `dof_pos`
+  （[torch_humanoid_batch.py:437-444](../gear_sonic/utils/motion_lib/torch_humanoid_batch.py)，
+  `pose.sum(dim=-1)[..., self.actuated_joints_idx]`）。`self.actuated_joints_idx`
+  由 `from_mjcf()` 解析 MJCF 得到的 `body_to_joint`（记录"哪个 body 挂了哪个可控关节"）
+  推导。
+- **真正的 bug**：`from_mjcf()`（原 `torch_humanoid_batch.py:299-300`）在统计
+  `joints_range`（关节限位）时，已经对根节点的 `<joint type="free">`（浮动基座关节）
+  做了跳过处理；但紧接着构造 `body_to_joint` 时，重新调用了一次
+  `xml_node.findall("joint")`（不是复用上面已经过滤好的 `all_joints`），没有做同样的
+  跳过，导致根节点的浮动基座关节被错误地当成"可控关节"塞进了 `body_to_joint`。
+- BUMI2 的 `bumi2.xml` 根 body（`base_link`）声明了
+  `<joint name="floating_base_joint" type="free">`，直接触发这个隐藏 bug：
+  `actuated_joints_idx` 多了一个指向根节点自身（index 0）的错误条目，导致
+  `dof_pos` 变成 22 列（而不是应有的 21 列），后续所有基于 21 项
+  `mujoco_to_isaaclab_dof` 映射数组的取值全部整体错位一格，其中恰好映射到
+  `waist_yaw_joint` 槛位的那一格直接取到了根节点自身旋转的轴角分量之和
+  （实测 `-1.4207242727279663` 精确等于 `pose_aa[:,0,:].sum(-1)`，即根节点三个
+  轴角分量之和，逐位精确验证）。
+- **为什么 BUMI3/G1 训练至今没有暴露这个 bug**（用户明确问过这一点）：
+  - `bumi3.xml` 的根 body **完全没有 `<joint>` 标签**（实测核实），`body_to_joint`
+    构造过程根本不会碰到这条错误路径，跟这次的 fix 是否存在无关——修了这个 bug
+    对 BUMI3 是完全无操作（新旧逻辑产出的 `body_to_joint` 字典逐项相同，实测核实）。
+  - `g1_29dof_rev_1_0.xml` 的根 body **同样声明了** `<joint type="free">`（跟
+    BUMI2 一样），本该同样触发这个 bug，但 G1 的 MJCF 恰好没有 BUMI2 那样额外的
+    非关节固定 body（BUMI2 多了一个 `base_imu` 传感器挂载 body），使得 G1 的
+    `len(body_to_joint)`（22 到 30 视为"有 bug"版本的 body_to_joint）碰巧等于
+    `len(body_names)`，从而落进了"提前有另一条安全分支"
+    （`pose.sum(dim=-1)[...,1:]`，不依赖 `actuated_joints_idx`）——修复前后对 G1
+    实测计算结果完全一致（有 bug 版本恰好蒙对了，只是走的分支不同）。
+  - 结论：这是一个此前从未被真正验证过、纯属"运气"才没有在 G1/BUMI3 上暴露出来的
+    隐藏 bug，和 BUMI3 的 SONIC 训练是否"成熟"无关——这条代码路径 BUMI3/G1 训练
+    从未真正走过。
+
+### 3. 修复
+
+- `gear_sonic/utils/motion_lib/torch_humanoid_batch.py`：`_add_xml_node()` 里
+  构造 `body_to_joint` 的循环改为复用上面已经过滤好的 `all_joints`（而不是重新
+  `findall`），并显式跳过 `type == "free"` 的关节：
+  ```python
+  for joint_node in all_joints:
+      if joint_node.attrib.get("type") != "free":
+          body_to_joint[node_name] = joint_node.attrib.get("name")
+  ```
+- 回归验证（用 Python 直接复现 `_add_xml_node` 逻辑跑三个机型的真实 MJCF 文件，不
+  依赖 Isaac Lab 环境）：
+  - BUMI3：修复前后 `body_to_joint` 字典逐项相同，零影响。
+  - G1：修复前 `len(body_to_joint)==len(node_names)`（30==30，走安全分支
+    `[...,1:]`）；修复后 `len(body_to_joint)=29 != len(node_names)=30`（走
+    `actuated_joints_idx` 分支），但 `actuated_joints_idx` 精确等于
+    `list(range(1,30))`，与安全分支的 `[...,1:]` 结果数值完全相同——零数值影响。
+  - BUMI2：修复后 `actuated_joints_idx` 从"22 项、含根节点"变成"21 项、不含根
+    节点"，`len(actuated_joints_idx)=21 != len(node_names)=23`（因为 BUMI2 多了
+    `base_imu` 这个非关节 body），走 `actuated_joints_idx` 分支，此时
+    `actuated_joints_idx` 已经修复正确。
+
+### 4. 验证结果
+
+- 在 Noetix-9 上用修复后的代码、num_envs=1 跑一次真实 IsaacLab 环境（`sonic_bumi2`
+  实验入口，checkpoint 用修复前训练留下的 `model_step_020000.pt` 只是为了跑通推理
+  链路，不代表这个 checkpoint 还有价值），取 `walk_forward_loop_003__A022` 这条动作
+  frame 0 的 `get_dof_pos()` 原始输出，逐关节（21 个全部核对，不是只挑一个）对比
+  同事部署包里对应的真实 `walk_forward_loop_003__A022_from_g1_bumi_v2_deploy.json`：
+  **21 个关节全部匹配，最大误差 `1.7e-6` 度（纯 float32 精度噪声，非真实差异）**。
+- 修复前同样的对比：21 个关节里 20 个的数值能在真实文件的其它关节里找到（说明
+  确实是整体错位而不是数值本身算错），`waist_yaw_joint` 那一格完全对不上任何
+  真实关节值（根节点数据污染）。
+
+### 5. 对已有训练成果的影响
+
+- **Noetix-9 上跑了约 44 小时、约 22000 个 iteration 的 8 卡训练，其全部
+  checkpoint（`model_step_002000.pt` ~ `model_step_022000.pt`、`last.pt`）
+  全部作废**：整个训练期间，机器人侵编码器看到的、以及 `g1_recon` aux loss
+  比较的参考关节角度都是错位污染过的数据，不是真实动作。之前几次汇报的
+  "13° 平均重建误差"、aux loss 收敛曲线，全部是在错误目标上算出来的，没有
+  参考价值。
+- 数据集本身（`/data0/bumi2_sonic_dataset_v1/built/`）**不需要重新构建**——
+  bug 只存在于训练环境实时解析 MJCF 重算 `dof_pos` 这条路径，不影响离线 PKL
+  文件本身（已确认 PKL 数据一直是对的）。修复代码后可以直接用现有数据集重新
+  训练。
+- 旧的训练输出目录
+  `/data0/bumi2_sonic_runs/TRL_BUMI2_Track/manager/universal_token/all_modes/
+  sonic_bumi2_test-20260919_035712/` 重命名保留（不删除，留作这次事故的调试
+  留档），新训练使用新的 `experiment_name`。
+
+### 6. 兼容性与回滚
+
+- `torch_humanoid_batch.py` 是 G1/BUMI2/BUMI3 共享的底层工具类；本次修复已实测
+  验证对 BUMI3 零影响、对 G1 数值结果零影响，只修正了 BUMI2 之前错误的行为。
+- 回滚方法：`git revert` 本次提交即可完全撤销（会恢复到含 bug 的状态，不建议
+  在 BUMI2 还需要训练的情况下回滚）。

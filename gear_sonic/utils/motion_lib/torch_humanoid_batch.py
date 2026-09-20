@@ -296,8 +296,9 @@ class Humanoid_Batch:
                 else:
                     if not joint.attrib.get("type") == "free":
                         joints_range.append([-np.pi, np.pi])
-            for joint_node in xml_node.findall("joint"):
-                body_to_joint[node_name] = joint_node.attrib.get("name")
+            for joint_node in all_joints:
+                if joint_node.attrib.get("type") != "free":
+                    body_to_joint[node_name] = joint_node.attrib.get("name")
 
             for next_node in xml_node.findall("body"):
                 node_index = _add_xml_node(next_node, curr_index, node_index)

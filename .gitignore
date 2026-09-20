@@ -1,5 +1,6 @@
 # 同事代码/资产打包，体积大且含私有内容，禁止入库
 *.tar.gz
+*.zip
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

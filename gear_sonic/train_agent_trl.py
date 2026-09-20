@@ -475,6 +475,119 @@ def main(config: OmegaConf):
         _resolve=False,
     )
 
+    # 诊断模式：不训练，只用已加载好权重的 policy 对单条指定动作跑一次
+    # encoder→token→g1_kin decoder 前向，报告关节重建误差（角度制），用于验证
+    # BUMI2 SONIC 上层训练是否已经收敛到可用于桥接的重建质量。通过
+    # ++manager_env.commands.motion.filter_motion_keys=[<key>] 配合 num_envs=1
+    # 保证 env 0 加载的就是指定动作。不影响任何正常训练路径。
+    if config.get("inspect_g1_recon", False):
+        import numpy as np
+
+        obs_dict = env.reset()
+        if isinstance(obs_dict, tuple):
+            obs_dict = obs_dict[0]
+        print("INSPECT obs_dict keys:", list(obs_dict.keys()))
+        for k, v in obs_dict.items():
+            if torch.is_tensor(v):
+                print(f"INSPECT obs[{k}].shape = {tuple(v.shape)}")
+
+        policy.eval()
+        with torch.no_grad():
+            obs_for_model = dict(obs_dict)
+            if policy.running_mean_std is not None:
+                obs_for_model[policy.input_key] = policy.running_mean_std(
+                    obs_for_model[policy.input_key]
+                )
+            for key in ("actor_obs", "tokenizer"):
+                if obs_for_model[key].dim() == 2:
+                    obs_for_model[key] = obs_for_model[key].unsqueeze(1)
+            output = policy.actor_module(
+                obs_for_model, compute_aux_loss=False, return_dict=True
+            )
+
+        print("INSPECT output keys:", list(output.keys()))
+        tokenizer_obs = output["tokenizer_obs"]
+        decoded = output["decoded_outputs"]["g1_kin"]
+        print("INSPECT tokenizer_obs keys:", list(tokenizer_obs.keys()))
+        print("INSPECT decoded keys:", list(decoded.keys()))
+
+        gt_nonflat = tokenizer_obs["command_multi_future_nonflat"]
+        pred_nonflat = decoded["command_multi_future_nonflat"]
+        print("INSPECT command_multi_future_nonflat gt shape:", tuple(gt_nonflat.shape))
+        print("INSPECT command_multi_future_nonflat pred shape:", tuple(pred_nonflat.shape))
+
+        num_future_frames = config.manager_env.commands.motion.num_future_frames
+        robot_num_dof = env.env.scene["robot"].num_joints
+        print(f"INSPECT num_future_frames={num_future_frames} robot_num_dof={robot_num_dof}")
+
+        def split_pos_vel(nonflat):
+            flat = nonflat.reshape(nonflat.shape[0], -1)
+            half = num_future_frames * robot_num_dof
+            pos_flat = flat[:, :half]
+            vel_flat = flat[:, half:]
+            pos = pos_flat.reshape(-1, num_future_frames, robot_num_dof)
+            vel = vel_flat.reshape(-1, num_future_frames, robot_num_dof)
+            return pos, vel
+
+        gt_pos, gt_vel = split_pos_vel(gt_nonflat)
+        pred_pos, pred_vel = split_pos_vel(pred_nonflat)
+
+        pos_err_rad = (pred_pos - gt_pos).abs()
+        pos_err_deg = torch.rad2deg(pos_err_rad)
+        print(
+            "INSPECT joint_pos reconstruction error (deg): "
+            f"mean={pos_err_deg.mean().item():.4f} "
+            f"max={pos_err_deg.max().item():.4f} "
+            f"p95={torch.quantile(pos_err_deg.flatten(), 0.95).item():.4f}"
+        )
+        per_frame_deg = pos_err_deg.mean(dim=(0, 2))
+        print(
+            "INSPECT per-future-frame mean error (deg):",
+            np.round(per_frame_deg.cpu().numpy(), 4).tolist(),
+        )
+
+        robot_joint_names = list(env.env.scene["robot"].joint_names)
+        isaaclab_joints_declared = list(env.env.cfg.isaaclab_to_mujoco_mapping["isaaclab_joints"])
+        print("INSPECT robot.joint_names           :", robot_joint_names)
+        print("INSPECT isaaclab_to_mujoco[isaaclab_joints]:", isaaclab_joints_declared)
+        print("INSPECT names_match:", robot_joint_names == isaaclab_joints_declared)
+        motion_command = env.env.command_manager.get_term("motion")
+        print(
+            "INSPECT motion_ids:", motion_command.motion_ids.tolist(),
+            "time_steps:", motion_command.time_steps.tolist(),
+            "motion_start_time_steps:", motion_command.motion_start_time_steps.tolist(),
+        )
+        print("INSPECT mujoco_to_isaaclab_dof:", motion_command.mujoco_to_isaaclab_dof)
+        print("INSPECT isaaclab_to_mujoco_dof:", motion_command.isaaclab_to_mujoco_dof)
+        raw_dof_pos_frame0 = motion_command.motion_lib.get_dof_pos(
+            motion_command.motion_ids, motion_command.motion_start_time_steps
+        )
+        print("INSPECT raw get_dof_pos frame0:", raw_dof_pos_frame0[0].cpu().numpy().tolist())
+        print(
+            "INSPECT command.joint_pos (current frame) property:",
+            motion_command.joint_pos[0].cpu().numpy().tolist(),
+        )
+        dump_path = config.get("inspect_g1_recon_dump_path", None)
+        if dump_path is not None:
+            import json
+
+            dump = {
+                "robot_joint_names_isaaclab_order": robot_joint_names,
+                "motion_ids": motion_command.motion_ids.tolist(),
+                "time_steps": motion_command.time_steps.tolist(),
+                "motion_start_time_steps": motion_command.motion_start_time_steps.tolist(),
+                "gt_pos_rad": gt_pos[0].cpu().numpy().tolist(),
+                "pred_pos_rad": pred_pos[0].cpu().numpy().tolist(),
+            }
+            with open(dump_path, "w") as f:
+                json.dump(dump, f)
+            print(f"INSPECT dumped raw values to {dump_path}")
+
+        print("INSPECT_G1_RECON_DONE")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
     # Training loop
     trainer.train()
 
