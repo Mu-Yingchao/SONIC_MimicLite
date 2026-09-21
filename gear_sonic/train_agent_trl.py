@@ -588,6 +588,110 @@ def main(config: OmegaConf):
         sys.stderr.flush()
         os._exit(0)
 
+    # 桥接导出模式：把 g1_kin decoder 的 token 往返重建结果，和驱动源自带的绝对
+    # root 轨迹拼在一起，导出成 MimicLite-BUMI2 能读的 bumi_deploy_motion_v1 JSON。
+    #
+    # 已知局限（2026-09-21 跟用户确认过，先用这个近似）：g1_kin decoder 单次前向
+    # 只能吐出"当前时刻 + 未来 10 帧（间隔 0.1s，覆盖 1 秒）"这一个窗口，本函数只
+    # 调用一次（不做多窗口拼接/不做真实物理闭环 rollout），线性插值到 50Hz，因此
+    # 导出的动作只有 1 秒长，不代表完整动作片段。root 轨迹（位置/朝向）不经过
+    # decoder，直接从驱动源本身的真值轨迹截取对应的 1 秒——这是刻意的设计
+    # （g1_kin 不重建绝对根轨迹，只重建关节角度/速度，详见 sonic_mimiclite_new.md
+    # §6）。
+    if config.get("export_bridge_motion", False):
+        import json
+
+        import numpy as np
+
+        output_path = config.get("export_bridge_motion_output", None)
+        if output_path is None:
+            raise ValueError("export_bridge_motion requires ++export_bridge_motion_output=<path>")
+
+        obs_dict = env.reset()
+        if isinstance(obs_dict, tuple):
+            obs_dict = obs_dict[0]
+
+        policy.eval()
+        with torch.no_grad():
+            obs_for_model = dict(obs_dict)
+            if policy.running_mean_std is not None:
+                obs_for_model[policy.input_key] = policy.running_mean_std(
+                    obs_for_model[policy.input_key]
+                )
+            for key in ("actor_obs", "tokenizer"):
+                if obs_for_model[key].dim() == 2:
+                    obs_for_model[key] = obs_for_model[key].unsqueeze(1)
+            output = policy.actor_module(obs_for_model, compute_aux_loss=False, return_dict=True)
+
+        decoded = output["decoded_outputs"]["g1_kin"]
+        num_future_frames = config.manager_env.commands.motion.num_future_frames
+        robot_num_dof = env.env.scene["robot"].num_joints
+
+        def split_pos_vel(nonflat):
+            flat = nonflat.reshape(nonflat.shape[0], -1)
+            half = num_future_frames * robot_num_dof
+            pos = flat[:, :half].reshape(-1, num_future_frames, robot_num_dof)
+            vel = flat[:, half:].reshape(-1, num_future_frames, robot_num_dof)
+            return pos, vel
+
+        pred_pos, pred_vel = split_pos_vel(decoded["command_multi_future_nonflat"])
+        pred_pos = pred_pos[0].cpu().numpy()  # (num_future_frames, dof)
+        pred_vel = pred_vel[0].cpu().numpy()
+
+        motion_command = env.env.command_manager.get_term("motion")
+        robot_joint_names = list(env.env.scene["robot"].joint_names)
+        frame_skips = motion_command.frame_skips
+        sparse_frame_idx = np.arange(num_future_frames) * frame_skips  # e.g. [0,5,...,45]
+        dense_frame_idx = np.arange(sparse_frame_idx[-1] + 1)  # [0..45] 密集 50Hz 帧号
+
+        def interp_to_dense(sparse_values):
+            # sparse_values: (num_future_frames, D) -> (len(dense_frame_idx), D)
+            out = np.empty((len(dense_frame_idx), sparse_values.shape[1]), dtype=np.float64)
+            for d in range(sparse_values.shape[1]):
+                out[:, d] = np.interp(dense_frame_idx, sparse_frame_idx, sparse_values[:, d])
+            return out
+
+        dense_joint_pos = interp_to_dense(pred_pos)
+        dense_joint_vel = interp_to_dense(pred_vel)
+
+        motion_ids_dense = motion_command.motion_ids[0].expand(len(dense_frame_idx))
+        time_steps_dense = motion_command.motion_start_time_steps[0] + torch.as_tensor(
+            dense_frame_idx, device=motion_ids_dense.device, dtype=torch.long
+        )
+        root_pos_w = motion_command.motion_lib.get_root_pos_w(
+            motion_ids_dense, time_steps_dense
+        ).cpu().numpy()
+        # motion_lib.get_root_quat_w() 直接返回 wxyz（实测核对：与已知真值逐位相等，
+        # 不需要再做 xyzw->wxyz 转换——不要被 motion_lib_base.py 里对
+        # body_quat_w_full 做的 xyzw_to_wxyz 转换误导，那是另一个派生数组）。
+        root_quat_wxyz = motion_command.motion_lib.get_root_quat_w(
+            motion_ids_dense, time_steps_dense
+        ).cpu().numpy()
+
+        deploy_json = {
+            "metadata": {
+                "format": "bumi_deploy_motion_v1",
+                "frames_count": len(dense_frame_idx),
+                "joints_count": robot_num_dof,
+                "fps": 50.0,
+                "joint_order": "deploy",
+                "joint_names": robot_joint_names,
+                "root_body_name": "base_link",
+                "quaternion_order": "wxyz",
+                "source": "sonic_g1_kin_bridge_export_1s_approx",
+            },
+            "joint_pos": dense_joint_pos.tolist(),
+            "joint_vel": dense_joint_vel.tolist(),
+            "root_pos_w": root_pos_w.tolist(),
+            "root_quat_w": root_quat_wxyz.tolist(),
+        }
+        with open(output_path, "w") as f:
+            json.dump(deploy_json, f)
+        print(f"EXPORT_BRIDGE_MOTION_DONE frames={len(dense_frame_idx)} -> {output_path}")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(0)
+
     # Training loop
     trainer.train()
 
