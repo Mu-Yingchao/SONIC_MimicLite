@@ -483,6 +483,17 @@ def main(config: OmegaConf):
     if config.get("inspect_g1_recon", False):
         import numpy as np
 
+        # 实测发现：全新构造的 env 第一次 env.reset() 存在"冷启动"效应，算出来的
+        # 重建误差系统性偏大 2~4 倍（实测同一个 checkpoint/同一条动作/同一个起始帧，
+        # 只做一次 reset 测出 ~14°，先做一次热身 reset 再测第二次只有 ~4~6°）。
+        # 具体机制未查证到 IsaacLab 源码层面的确切原因，但现象在多次独立测试里
+        # 稳定复现，因此这里固定加一次热身 reset，不能省略，否则度数误差会被
+        # 系统性高估。2026-09-21 用有偏差的测法得到过一版"G1 明显更好、BUMI 系列
+        # 追不上"的错误结论，补上热身 reset 重测后完全反转（G1/BUMI3-10万轮/BUMI2
+        # 三者实际都在 3.5~4.2° 左右，没有明显差距），详见 sonic_mimiclite_new.md
+        # §3 和 BUMI3_SONIC_修改记录.md 对应条目。
+        env.reset()
+
         obs_dict = env.reset()
         if isinstance(obs_dict, tuple):
             obs_dict = obs_dict[0]
@@ -591,13 +602,17 @@ def main(config: OmegaConf):
     # 桥接导出模式：把 g1_kin decoder 的 token 往返重建结果，和驱动源自带的绝对
     # root 轨迹拼在一起，导出成 MimicLite-BUMI2 能读的 bumi_deploy_motion_v1 JSON。
     #
-    # 已知局限（2026-09-21 跟用户确认过，先用这个近似）：g1_kin decoder 单次前向
-    # 只能吐出"当前时刻 + 未来 10 帧（间隔 0.1s，覆盖 1 秒）"这一个窗口，本函数只
-    # 调用一次（不做多窗口拼接/不做真实物理闭环 rollout），线性插值到 50Hz，因此
-    # 导出的动作只有 1 秒长，不代表完整动作片段。root 轨迹（位置/朝向）不经过
-    # decoder，直接从驱动源本身的真值轨迹截取对应的 1 秒——这是刻意的设计
-    # （g1_kin 不重建绝对根轨迹，只重建关节角度/速度，详见 sonic_mimiclite_new.md
-    # §6）。
+    # g1_kin decoder 单次前向只能吐出"当前时刻 + 未来 10 帧（间隔 0.1s，覆盖 1
+    # 秒）"这一个窗口，覆盖完整动作需要多次调用、把窗口拼起来。这里用"多次独立
+    # env.reset()"的方式拼接：每次通过临时替换 motion_lib.sample_time_steps
+    # （只在这一次 reset 期间生效，reset 完立刻还原）把该 env 的起始帧钉死在我们
+    # 想要的窗口起点上，让 Isaac Lab 官方 reset 流程（包括把机器人物理姿态写回
+    # 仿真器这一步）在正确的起始帧上完整走一遍——不是自己手搓改 time_steps 张量后
+    # 绕开物理状态同步，这样才能保证 encoder 第二个输入特征（参考朝向相对当前
+    # 机器人朝向的差值）在每个窗口开头都是有效值，不是从上一个窗口结束时残留的
+    # 姿态算出来的垃圾值。root 轨迹（位置/朝向）不经过 decoder，直接从驱动源本身
+    # 的真值轨迹整段读取——这是刻意的设计（g1_kin 不重建绝对根轨迹，只重建关节
+    # 角度/速度，详见 sonic_mimiclite_new.md §6）。
     if config.get("export_bridge_motion", False):
         import json
 
@@ -607,25 +622,13 @@ def main(config: OmegaConf):
         if output_path is None:
             raise ValueError("export_bridge_motion requires ++export_bridge_motion_output=<path>")
 
-        obs_dict = env.reset()
-        if isinstance(obs_dict, tuple):
-            obs_dict = obs_dict[0]
-
-        policy.eval()
-        with torch.no_grad():
-            obs_for_model = dict(obs_dict)
-            if policy.running_mean_std is not None:
-                obs_for_model[policy.input_key] = policy.running_mean_std(
-                    obs_for_model[policy.input_key]
-                )
-            for key in ("actor_obs", "tokenizer"):
-                if obs_for_model[key].dim() == 2:
-                    obs_for_model[key] = obs_for_model[key].unsqueeze(1)
-            output = policy.actor_module(obs_for_model, compute_aux_loss=False, return_dict=True)
-
-        decoded = output["decoded_outputs"]["g1_kin"]
+        motion_command = env.env.command_manager.get_term("motion")
+        robot_joint_names = list(env.env.scene["robot"].joint_names)
         num_future_frames = config.manager_env.commands.motion.num_future_frames
         robot_num_dof = env.env.scene["robot"].num_joints
+        frame_skips = motion_command.frame_skips
+        sparse_frame_idx = np.arange(num_future_frames) * frame_skips  # e.g. [0,5,...,45]
+        window_len = int(sparse_frame_idx[-1] + 1)  # 每个窗口稠密化后的帧数，例如 46
 
         def split_pos_vel(nonflat):
             flat = nonflat.reshape(nonflat.shape[0], -1)
@@ -634,60 +637,120 @@ def main(config: OmegaConf):
             vel = flat[:, half:].reshape(-1, num_future_frames, robot_num_dof)
             return pos, vel
 
-        pred_pos, pred_vel = split_pos_vel(decoded["command_multi_future_nonflat"])
-        pred_pos = pred_pos[0].cpu().numpy()  # (num_future_frames, dof)
-        pred_vel = pred_vel[0].cpu().numpy()
-
-        motion_command = env.env.command_manager.get_term("motion")
-        robot_joint_names = list(env.env.scene["robot"].joint_names)
-        frame_skips = motion_command.frame_skips
-        sparse_frame_idx = np.arange(num_future_frames) * frame_skips  # e.g. [0,5,...,45]
-        dense_frame_idx = np.arange(sparse_frame_idx[-1] + 1)  # [0..45] 密集 50Hz 帧号
-
-        def interp_to_dense(sparse_values):
-            # sparse_values: (num_future_frames, D) -> (len(dense_frame_idx), D)
-            out = np.empty((len(dense_frame_idx), sparse_values.shape[1]), dtype=np.float64)
+        def interp_to_dense(sparse_values, n_dense):
+            dense_idx = np.arange(n_dense)
+            out = np.empty((n_dense, sparse_values.shape[1]), dtype=np.float64)
             for d in range(sparse_values.shape[1]):
-                out[:, d] = np.interp(dense_frame_idx, sparse_frame_idx, sparse_values[:, d])
+                out[:, d] = np.interp(dense_idx, sparse_frame_idx, sparse_values[:, d])
             return out
 
-        dense_joint_pos = interp_to_dense(pred_pos)
-        dense_joint_vel = interp_to_dense(pred_vel)
+        policy.eval()
 
-        motion_ids_dense = motion_command.motion_ids[0].expand(len(dense_frame_idx))
-        time_steps_dense = motion_command.motion_start_time_steps[0] + torch.as_tensor(
-            dense_frame_idx, device=motion_ids_dense.device, dtype=torch.long
+        # 先正常 reset 一次，只是为了读出 motion_ids、总帧数，不用这次的重建结果。
+        env.reset()
+        motion_ids = motion_command.motion_ids.clone()
+        total_frames = int(
+            motion_command.motion_lib.get_time_step_total(motion_ids)[0].item()
         )
+        print(f"EXPORT total_frames={total_frames} window_len={window_len}")
+
+        # sonic_bumi2.yaml 开了 adaptive_sampling.enable=true，真正的 reset 路径走的
+        # 是 sample_motion_ids_and_time_steps（不是 sample_time_steps），必须патch
+        # 这一个——第一版代码 patch 错了方法，被下面的断言当场抓出来（错误地拿到了
+        # adaptive sampling 自己采样出的起始帧 60，不是我们要的 0），改成正确的方法。
+        real_sample_ids_and_steps = motion_command.motion_lib.sample_motion_ids_and_time_steps
+        fixed_motion_ids = motion_ids.clone()
+
+        joint_pos_chunks = []
+        joint_vel_chunks = []
+        window_starts = list(range(0, total_frames, window_len))
+        for w_idx, start in enumerate(window_starts):
+
+            def _fixed_ids_and_steps(n, _start=start):
+                return (
+                    fixed_motion_ids[:n].clone(),
+                    torch.full((n,), _start, dtype=torch.long, device=fixed_motion_ids.device),
+                )
+
+            motion_command.motion_lib.sample_motion_ids_and_time_steps = _fixed_ids_and_steps
+            try:
+                obs_dict = env.reset()
+            finally:
+                motion_command.motion_lib.sample_motion_ids_and_time_steps = (
+                    real_sample_ids_and_steps
+                )
+            if isinstance(obs_dict, tuple):
+                obs_dict = obs_dict[0]
+
+            actual_start = int(motion_command.motion_start_time_steps[0].item())
+            if actual_start != start:
+                raise RuntimeError(
+                    f"Window {w_idx}: requested start {start} but motion_start_time_steps "
+                    f"came back as {actual_start} — sample_time_steps monkeypatch didn't "
+                    "take effect as expected, aborting rather than exporting silently wrong data."
+                )
+
+            with torch.no_grad():
+                obs_for_model = dict(obs_dict)
+                if policy.running_mean_std is not None:
+                    obs_for_model[policy.input_key] = policy.running_mean_std(
+                        obs_for_model[policy.input_key]
+                    )
+                for key in ("actor_obs", "tokenizer"):
+                    if obs_for_model[key].dim() == 2:
+                        obs_for_model[key] = obs_for_model[key].unsqueeze(1)
+                output = policy.actor_module(obs_for_model, compute_aux_loss=False, return_dict=True)
+
+            decoded = output["decoded_outputs"]["g1_kin"]
+            pred_pos, pred_vel = split_pos_vel(decoded["command_multi_future_nonflat"])
+            pred_pos = pred_pos[0].cpu().numpy()
+            pred_vel = pred_vel[0].cpu().numpy()
+
+            n_valid = min(window_len, total_frames - start)
+            dense_pos = interp_to_dense(pred_pos, window_len)[:n_valid]
+            dense_vel = interp_to_dense(pred_vel, window_len)[:n_valid]
+            joint_pos_chunks.append(dense_pos)
+            joint_vel_chunks.append(dense_vel)
+            print(f"EXPORT window {w_idx}: start={start} n_valid={n_valid}")
+
+        joint_pos_full = np.concatenate(joint_pos_chunks, axis=0)
+        joint_vel_full = np.concatenate(joint_vel_chunks, axis=0)
+        assert joint_pos_full.shape[0] == total_frames, (
+            f"stitched joint_pos length {joint_pos_full.shape[0]} != total_frames {total_frames}"
+        )
+
+        all_time_steps = torch.arange(total_frames, device=motion_ids.device, dtype=torch.long)
+        motion_ids_full = motion_ids[0].expand(total_frames)
         root_pos_w = motion_command.motion_lib.get_root_pos_w(
-            motion_ids_dense, time_steps_dense
+            motion_ids_full, all_time_steps
         ).cpu().numpy()
         # motion_lib.get_root_quat_w() 直接返回 wxyz（实测核对：与已知真值逐位相等，
         # 不需要再做 xyzw->wxyz 转换——不要被 motion_lib_base.py 里对
         # body_quat_w_full 做的 xyzw_to_wxyz 转换误导，那是另一个派生数组）。
         root_quat_wxyz = motion_command.motion_lib.get_root_quat_w(
-            motion_ids_dense, time_steps_dense
+            motion_ids_full, all_time_steps
         ).cpu().numpy()
 
         deploy_json = {
             "metadata": {
                 "format": "bumi_deploy_motion_v1",
-                "frames_count": len(dense_frame_idx),
+                "frames_count": total_frames,
                 "joints_count": robot_num_dof,
                 "fps": 50.0,
                 "joint_order": "deploy",
                 "joint_names": robot_joint_names,
                 "root_body_name": "base_link",
                 "quaternion_order": "wxyz",
-                "source": "sonic_g1_kin_bridge_export_1s_approx",
+                "source": "sonic_g1_kin_bridge_export_multiwindow",
             },
-            "joint_pos": dense_joint_pos.tolist(),
-            "joint_vel": dense_joint_vel.tolist(),
+            "joint_pos": joint_pos_full.tolist(),
+            "joint_vel": joint_vel_full.tolist(),
             "root_pos_w": root_pos_w.tolist(),
             "root_quat_w": root_quat_wxyz.tolist(),
         }
         with open(output_path, "w") as f:
             json.dump(deploy_json, f)
-        print(f"EXPORT_BRIDGE_MOTION_DONE frames={len(dense_frame_idx)} -> {output_path}")
+        print(f"EXPORT_BRIDGE_MOTION_DONE frames={total_frames} windows={len(window_starts)} -> {output_path}")
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(0)
