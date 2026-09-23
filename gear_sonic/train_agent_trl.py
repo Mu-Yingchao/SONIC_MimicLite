@@ -731,6 +731,16 @@ def main(config: OmegaConf):
             motion_ids_full, all_time_steps
         ).cpu().numpy()
 
+        # 四元数半球对齐：q 和 -q 表示同一个旋转，但 motion_lib 返回的符号在帧之间
+        # 不保证连续。实测 walk_forward_loop_003__A022 这条 434 帧的动作，导出结果
+        # 里有 13 处相邻帧符号相反（同一条动作的原始 any4hdmi 数据是 0 处）。姿态
+        # 本身没错，但任何对四元数做插值/slerp 的下游（any4hdmi 建 FK cache 时的
+        # 重采样、真机部署 AcController.cpp 读这个 JSON 后的平滑）在符号跳变处会
+        # 沿"长路"绕一圈，插出完全错误的中间姿态。这里强制让每一帧与前一帧同半球。
+        for frame_idx in range(1, root_quat_wxyz.shape[0]):
+            if float(np.dot(root_quat_wxyz[frame_idx], root_quat_wxyz[frame_idx - 1])) < 0.0:
+                root_quat_wxyz[frame_idx] = -root_quat_wxyz[frame_idx]
+
         deploy_json = {
             "metadata": {
                 "format": "bumi_deploy_motion_v1",
