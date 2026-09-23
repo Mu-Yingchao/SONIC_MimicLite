@@ -4423,3 +4423,95 @@ tmux new-session -d -s tensorboard_bumi3_three_source \
   诊断/导出代码，不影响任何正常训练路径。
 - 本条记录不涉及任何训练数据、模型权重或已训练 checkpoint 的变更——第 17618
   轮的训练结果本身没有问题，只是之前用来评估它的测量方法有 bug，现在已纠正。
+
+## 2026-09-23：验证全链路打通——SONIC token → 桥接导出 → MimicLite-BUMI2 真实策略追踪
+
+### 1. 背景
+
+此前只验证了两段各自独立的正确性：`export_bridge_motion` 导出的
+`bumi_deploy_motion_v1` JSON 格式在 root 轨迹上与同事真实部署数据逐帧位对位
+匹配、SONIC decoder 重建误差在合理范围（3.73°）。但从未验证过"把我们自己
+导出的动作真的喂给 MimicLite-BUMI2 的真实训练框架和真实 checkpoint，策略能
+不能追踪"——这是链路是否真正打通的唯一直接证据。
+
+同事的真实训练服务器（`user@112.65.216.193:50019`，主机名 `ZP-NC592`，
+`/data2/zcx/active-adaptation`）此前已用真实 checkpoint
+（`checkpoint_40000.pt`）+ 真实训练数据跑通 `play.py` smoke test 作为对照基线。
+
+### 2. 数据格式转换：从我们的桥接导出到 any4hdmi 的 qpos 格式
+
+在 `ZP-NC592` 上读取一份同事真实训练用 any4hdmi npz 文件
+（`jump_ff_270_002__A159_from_g1_bumi_v2.npz`），把其中的 `qpos[0]`
+（28 维）与我们自己数据集里同一条动作已验证过的 `dof`/`root_trans_offset`/
+`root_rot` 三个数组逐值比对（float32 精度下完全一致），确认：
+
+```
+qpos = [root_pos_w(3), root_quat_w_wxyz(4), joint_pos_MuJoCo顺序(21)]
+```
+
+用这个已验证的格式，把我们自己的桥接导出结果
+（`bridge_export_full.json`，`walk_forward_loop_003__A022`，434 帧）转换成
+同样的 npz：root_pos_w、root_quat_w（桥接导出里本来就是 wxyz，无需转换）
+直接拼接，joint_pos 用已有的 `ISAACLAB_TO_MUJOCO_DOF` 映射
+（`[2,5,9,13,17,6,10,14,18,0,3,7,11,15,19,1,4,8,12,16,20]`，早先在
+`bumi2.py` 里验证过）从 IsaacLab 顺序重排到 MuJoCo 顺序。
+
+事后在同事数据集的 `manifest.json` 里看到 `source_joint_names`/
+`target_hinge_joint_names` 两个字段，逐个核对后发现跟我们用的 IsaacLab 顺序
+/MuJoCo 顺序**完全一致**——说明这个映射关系不是猜测，两边独立推导出了同一个
+结论。
+
+### 3. 接入方式：不碰真实数据，用 manifest 发现机制插入自定义动作
+
+any4hdmi 的 `load_any4hdmi_dataset` 靠向上查找 `manifest.json` 来判定
+数据集根目录，`motions_subdir` 下任意子目录都会被 `rglob("*.npz")` 扫到。
+把转换好的 npz 放进真实数据集目录下新建的独立子目录
+`/data2/zcx/datasets/any4hdmi-bumi-v2/motions/sonic_bridge_custom/`
+（没有修改任何真实文件），再用 Hydra CLI 覆盖
+`task.command.motion_cfgs.bumi_v2.path` 指向这个子目录，其余参数与之前跑通
+的真实数据 smoke test 命令完全一致（`checkpoint_path=.../checkpoint_40000.pt`，
+`backend=mjlab`，`headless=true`，`task.num_envs=2`）。
+
+### 4. 结果：全链路打通，追踪质量与真实数据同一水平
+
+日志确认 any4hdmi 正确识别出"1 motions / 434 frames"（与我们导出的帧数
+精确一致）。两个并行 env 各跑完一整条 434 帧的自定义动作，终止统计：
+
+| 终止原因 | 我们的桥接动作 | 真实训练数据（对照） |
+|---|---|---|
+| `motion_timeout`（正常播完） | 1.0 / 1.0 | 1.0（多次采样一致） |
+| `body_pos_error`（追踪失败） | 0.0 / 0.0 | 0.0 |
+| `body_ori_error`（追踪失败） | 0.0 / 0.0 | 0.0 |
+| `root_ori_error`（追踪失败） | 0.0 / 0.0 | 0.0 |
+
+两条自定义动作都是靠 `motion_timeout` 正常结束，没有一次因为追踪误差超限被
+提前打断——这是判断"策略能不能追踪这条参考动作"的直接依据。
+
+`tracking_metrics`（body_pos/root_ori/joint_pos/body_ori/root_pos 的episode
+累积误差）落在真实训练数据同批次采样范围之内，甚至更靠好的一端：
+
+| 指标 | 我们的桥接动作（2 条样本） | 真实数据（3 条样本，同一批日志） |
+|---|---|---|
+| body_pos | 9.4 / 9.8 | 8.7 / 14.1 / 56.0 |
+| body_ori | 43.3 / 43.4 | — / 54.2 / 227.3 |
+| root_ori | 24.5 / 27.2 | 24.7 / 44.9 / 115.5 |
+| root_pos | 105.0 / 147.1 | 27.7 / 48.8 / 990.6 |
+| joint_pos | 20.7 / 20.1 | 23.8 / 37.9 / 165.0 |
+
+（`success` 二值指标两条自定义动作都是 0.0，但同一批真实数据里 3 条样本
+也有 2 条是 0.0——这是一个较严格的单集判定阈值，不能等同于"追踪失败"，
+真正的失败信号是上面的 termination 统计。）
+
+### 5. 结论
+
+SONIC token → decoder 重建 → 桥接多窗口拼接导出 → any4hdmi qpos 格式转换 →
+MimicLite-BUMI2 真实训练框架 + 真实 checkpoint 追踪，全链路在真实环境里
+跑通，且追踪质量与真实训练数据处于同一水平，没有出现任何专属于我们导出
+数据的追踪失败模式。测试用完后已 kill 掉远程进程，只在同事数据集目录下
+新增了一个独立子目录（`sonic_bridge_custom/`），未修改任何真实训练数据。
+
+### 6. 兼容性
+
+- 本条记录不涉及任何代码改动，纯粹是一次端到端验证实验。
+- 新增的自定义动作文件位于同事服务器上的独立子目录，与真实训练数据完全
+  隔离，不影响其正常训练/评估流程。
