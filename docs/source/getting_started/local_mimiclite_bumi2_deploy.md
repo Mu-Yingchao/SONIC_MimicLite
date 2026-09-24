@@ -50,43 +50,103 @@ BUMI2 在 MimicLite 侧有两份都叫 `bumi_v2_0810_rl.xml` 但内容不同的�
 
 ## 2. 一次性环境搭建
 
+整个搭建过程有**四个坑**，每个都会让你以为已经装好了、实际跑不起来。按顺序做。
+
+### 2.0 先建 ASCII 软链接
+
+Hydra 的 override 语法解析器**处理不了路径里的非 ASCII 字符**，
+`task.command.motion_cfgs.bumi_v2.path=/home/yingchaomu/下载/...` 会直接报
+`LexerNoViableAltException`，箭头正指在中文字符上。加引号能绕过一层，但下一个
+含中文的参数（比如 `checkpoint_path`）照样报。建两个软链接一劳永逸：
+
 ```bash
-AA=/home/yingchaomu/下载/mimiclite_review/bumi2/active-adaptation
+ln -sfn /home/yingchaomu/下载/SONIC_MimicLite_deploy            /home/yingchaomu/sonic_deploy
+ln -sfn /home/yingchaomu/下载/mimiclite_review/bumi2/active-adaptation /home/yingchaomu/sonic_aa
+```
+
+本文后面所有命令都走这两个 ASCII 路径。
+
+### 2.1 创建环境（务必配国内镜像）
+
+```bash
+AA=/home/yingchaomu/sonic_aa
 mkdir -p "$AA/venv/mjlab"
 cp "$AA/projects/mimic-lite/pyproject-mjlab.toml" "$AA/venv/mjlab/pyproject.toml"
 cd "$AA/venv/mjlab"
+
+# 关键：绕开本机 Clash 代理，走清华镜像
+export UV_DEFAULT_INDEX="https://pypi.tuna.tsinghua.edu.cn/simple"
+export no_proxy="${no_proxy},pypi.tuna.tsinghua.edu.cn"
+export NO_PROXY="${NO_PROXY},pypi.tuna.tsinghua.edu.cn"
+
 uv sync
 ```
 
-`uv sync` 会自己拉 CPython 3.12、torch 2.11 和整套 CUDA 依赖，**首次要几十分钟**，
-大部分时间在下载。
+**为什么必须配镜像**：本机有全局 `HTTPS_PROXY=http://127.0.0.1:7897`（Clash），
+uv 会把所有 PyPI 下载塞进这一条代理连接。实测同一个 CUDA wheel：
 
-### 必须手动补装 warp 和 mjlab
+| 路线 | 吞吐 | 下载剩余 2.5GB 预计 |
+|---|---|---|
+| Clash 代理 | 0.023 MB/s | **约 30 小时** |
+| 清华 TUNA 直连 | **31.29 MB/s** | 约 80 秒 |
+
+只把镜像域名加进 `no_proxy`、不整个清掉代理变量，是因为 `mjhub` 和 `any4hdmi`
+两个依赖从 GitHub 拉源码，那部分仍然要走代理。
+
+排查手法记一下：**不要只看缓存目录大小或日志有没有新行**——停滞和慢下载看起来
+一模一样。要么用 `ps -o etime,time` 对比"墙上时间 vs 累计 CPU 时间"，要么像这里
+一样对临时目录做两点采样算真实速率。
+
+### 2.2 手动补装 warp 和 mjlab（且必须指定 --python）
 
 `pyproject-mjlab.toml` 声明依赖 `active_adaptation[mjlab]`，但主
 `pyproject.toml` 里**根本没定义 `mjlab` 这个 extra**（只有 `render`）。uv 不会
 报错，这个 extra 会静默解析成空集，于是 `warp` 和 `mjlab` 两个包都装不上。
 
-`uv sync` 显示成功之后必须补这两步，否则 `play.py` 会在 import 阶段就挂掉：
+补装时**必须显式写 `--python`**：如果当前 shell 里有 `VIRTUAL_ENV` 指向别的
+环境（比如仓库自带的 `.venv_sim`），`uv pip install` 会装进那个环境而不是刚建的
+`.venv`，并且照样报告安装成功，只有最后 import 时才暴露。
 
 ```bash
-cd "$AA/venv/mjlab"
-uv pip install warp-lang
-uv pip install mjlab
+cd /home/yingchaomu/sonic_aa/venv/mjlab
+unset VIRTUAL_ENV
+uv pip install --python .venv/bin/python warp-lang mjlab
 ```
 
-### 验证环境
+### 2.3 重建项目注册表
+
+框架靠 `<active-adaptation>/.cache/projects.json` 决定加载哪些项目和 learning
+插件。**同事打包的 tar 里没有这个文件**，缺了它 `mimic_lite_learning` 不会被
+导入，`play.py` 会报 `Could not find 'algo/mimic_lite_ppo'`。
 
 ```bash
-cd "$AA/venv/mjlab"
-.venv/bin/python -c "
+cd /home/yingchaomu/sonic_aa
+unset VIRTUAL_ENV
+venv/mjlab/.venv/bin/aa-project discover --enabled
+
+# discover --enabled 会把所有项目都启用，但 facet/metamorph/mimic 依赖 IsaacLab，
+# mjlab 环境里没有，不关掉会在 import 阶段报 ModuleNotFoundError: No module named 'isaaclab'
+for p in facet metamorph mimic; do
+  venv/mjlab/.venv/bin/aa-project disable "$p"
+done
+```
+
+正确状态应该只有 `mimic_lite` 的 environment 和 learning 两项是 `enabled=true`。
+
+### 2.4 验证环境
+
+```bash
+cd /home/yingchaomu/sonic_aa
+unset VIRTUAL_ENV
+venv/mjlab/.venv/bin/python -c "
 import warp, mjlab, active_adaptation, mimic_lite, any4hdmi, torch
 print('warp', warp.__version__)
 print('torch', torch.__version__, 'cuda', torch.cuda.is_available())
-print('全部 import 通过')
+print('GPU:', torch.cuda.get_device_name(0))
 "
 ```
 
+实测通过的版本：`warp 1.17.0`、`torch 2.11.0+cu128`、`cuda True`、RTX 4090。
 `cuda` 必须是 `True`，mjlab 的物理后端（mujoco_warp）要跑在 GPU 上。
 
 ## 3. 完整链路：SONIC token → 本地可视化
@@ -194,11 +254,13 @@ root 位置应当**逐位相等**（不过 decoder，直接取自驱动源真值
 
 ## 4. 本地播放与可视化
 
+所有路径都用 §2.0 建的 ASCII 软链接，否则 Hydra 解析不了。
+
 ```bash
-AA=/home/yingchaomu/下载/mimiclite_review/bumi2/active-adaptation
-DEPLOY=/home/yingchaomu/下载/SONIC_MimicLite_deploy
-CKPT="$AA/outputs/2026-09-15/15-56-35-BumiV2TrackBase-from_checkpoint/checkpoint_40000.pt"
-cd "$AA"
+cd /home/yingchaomu/sonic_aa
+unset VIRTUAL_ENV
+CKPT=/home/yingchaomu/sonic_aa/outputs/2026-09-15/15-56-35-BumiV2TrackBase-from_checkpoint/checkpoint_40000.pt
+MOTION=/home/yingchaomu/sonic_deploy/any4hdmi-bumi-v2/motions/sonic_bridge
 ```
 
 ### 4.1 交互式可视化（主要用法）
@@ -213,12 +275,15 @@ venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/play.py \
   headless=false \
   task.num_envs=2 \
   task.termination.root_pos_error.enabled=false \
-  task.command.motion_cfgs.bumi_v2.path="$DEPLOY/any4hdmi-bumi-v2/motions/sonic_bridge" \
-  checkpoint_path="$CKPT"
+  task.command.motion_cfgs.bumi_v2.path=$MOTION \
+  checkpoint_path=$CKPT
 ```
 
-`headless=false` 打开 mjlab 交互式 viewer，支持暂停、重置、调速和热加载
-checkpoint。
+`headless=false` 打开 mjlab 交互式 viewer。**它是 viser 网页版，不弹原生窗口**——
+启动后浏览器打开 <http://127.0.0.1:8080>（以终端实际打印的端口为准）即可看到
+实时画面，支持暂停、重置、调速和热加载 checkpoint。
+
+逐步操作见 `local_play_quickstart.md`。
 
 参数说明：
 
@@ -232,24 +297,36 @@ checkpoint。
 
 ### 4.2 录成 MP4
 
+MP4 写到**当前工作目录**，所以先 `cd` 到想放视频的地方，再用绝对路径调 play.py：
+
 ```bash
-venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/play.py \
+mkdir -p /home/yingchaomu/sonic_deploy/renders
+cd /home/yingchaomu/sonic_deploy/renders
+unset VIRTUAL_ENV
+
+/home/yingchaomu/sonic_aa/venv/mjlab/.venv/bin/python \
+  /home/yingchaomu/sonic_aa/projects/mimic-lite/scripts/play.py \
   task=tracking-bumi-v2 task/motion=bumi/v2 +exp=ppo/train \
   algo/ppo/module=huge backend=mjlab headless=true task.num_envs=1 \
   task.termination.root_pos_error.enabled=false \
-  task.command.motion_cfgs.bumi_v2.path="$DEPLOY/any4hdmi-bumi-v2/motions/sonic_bridge" \
-  checkpoint_path="$CKPT" \
-  render_seconds=10
+  task.command.motion_cfgs.bumi_v2.path=$MOTION \
+  checkpoint_path=$CKPT \
+  render_seconds=9
 ```
 
-MP4 写到**当前工作目录**，文件名形如 `20260923-213000-a1b2c3d4.mp4`。
+文件名形如 `20260923-225806-0e7ad876.mp4`。
+
+**注意**：`render_seconds=9` 对应 450 个仿真步，实测渲染约 80 秒（比实时慢）。
+视频文件在开始时就会被创建但长度只有 48 字节，**必须等进程真正退出**再看，
+不能一发现 `.mp4` 存在就以为录完了。判断完成用 `pgrep -f scripts/play.py`
+是否还在，或者检查文件大小是否 > 10KB。
 
 ### 4.3 A/B 对照：跑真值动作
 
 把 `path` 换成 `original_qpos` 目录即可，其余参数完全不变：
 
 ```bash
-  task.command.motion_cfgs.bumi_v2.path="$DEPLOY/any4hdmi-bumi-v2/motions/original_qpos"
+  task.command.motion_cfgs.bumi_v2.path=/home/yingchaomu/sonic_deploy/any4hdmi-bumi-v2/motions/original_qpos
 ```
 
 ### 4.4 怎么判断追踪是否成功
@@ -269,6 +346,33 @@ MP4 写到**当前工作目录**，文件名形如 `20260923-213000-a1b2c3d4.mp4
 
 `('stats','tracking_metrics',*)` 是 episode 累积误差，用来横向比较我们的动作和
 真值动作，绝对值本身没有固定合格线。
+
+### 4.5 本地实测基线（2026-09-23）
+
+用 `checkpoint_40000.pt` 跑我们自己桥接导出的 `walk_forward_loop_003__A022`
+（434 帧），`task.num_envs=2`：
+
+```text
+('stats', 'episode_len')                      434.0    <- 与动作真实长度精确一致
+('stats', 'termination', 'motion_timeout')    1.0
+('stats', 'termination', 'body_pos_error')    0.0
+('stats', 'termination', 'body_ori_error')    0.0
+('stats', 'termination', 'root_ori_error')    0.0
+```
+
+两个并行环境都正常播完，零次因追踪误差被打断。与此前在同事服务器上跑同一条
+动作的结果对照，本地复现良好：
+
+| tracking_metrics | 本地 | 同事服务器 |
+|---|---|---|
+| body_pos | 9.46 | 9.44 / 9.77 |
+| body_ori | 43.11 | 43.33 / 43.36 |
+| joint_pos | 20.45 | 20.08 / 20.74 |
+| root_ori | 26.22 / 27.58 | 24.54 / 27.22 |
+| root_pos | 133.03 / 164.93 | 128.63 / 147.06 |
+
+差异在同一条动作不同起始相位的正常波动范围内，说明本地环境与同事训练环境
+行为一致，可以放心用本地做后续验证。
 
 ## 5. Noetix-9 上的 BUMI2 数据集路径速查
 
@@ -306,7 +410,12 @@ ssh -i .local/keys/noetix9.pem root@14.103.42.170 \
 
 | 现象 | 原因与处理 |
 |---|---|
-| `ModuleNotFoundError: warp` 或 `mjlab` | `uv sync` 静默跳过了 `[mjlab]` extra，按 §2 手动补装 |
+| `LexerNoViableAltException`，箭头指在中文字符上 | Hydra 解析不了非 ASCII 路径，用 §2.0 的 ASCII 软链接 |
+| `uv sync` 慢到几十小时 | 走了 Clash 代理，按 §2.1 配 TUNA 镜像 + `no_proxy` |
+| `ModuleNotFoundError: warp` 或 `mjlab`（但安装时报告成功） | 装进了 `VIRTUAL_ENV` 指向的别的环境，按 §2.2 加 `--python` 重装 |
+| `Could not find 'algo/mimic_lite_ppo'` | 缺 `.cache/projects.json`，按 §2.3 用 `aa-project discover --enabled` 重建 |
+| `ModuleNotFoundError: No module named 'isaaclab'` | `discover --enabled` 把 facet/metamorph/mimic 也启用了，按 §2.3 关掉 |
+| MP4 只有 48 字节 | 渲染还没结束就去看了，等 `pgrep -f scripts/play.py` 为空再检查 |
 | `No qpos motions found under …` | `path` 指的目录里没有 `.npz`，或指到了数据集根而不是 motions 子目录 |
 | `KeyError: qpos is not a file in the archive` | 把原始源格式 npz 放进 `motions/` 了，移到 `raw_from_noetix9/` |
 | `Could not find manifest.json above …` | 动作目录必须在带 `manifest.json` 的数据集根之下，any4hdmi 靠逐级向上找来定位数据集 |
