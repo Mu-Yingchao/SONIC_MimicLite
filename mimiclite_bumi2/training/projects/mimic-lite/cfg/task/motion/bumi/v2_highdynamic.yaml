@@ -1,0 +1,8 @@
+# @package task.command
+
+# Curated high-dynamic BUMI motions for focused training and evaluation.
+motion_cfgs:
+  bumi_v2:
+    path: /data2/zcx/datasets/any4hdmi-bumi-v2/motions/score_highdynamic
+    weight: 1.0
+    full_motion: true

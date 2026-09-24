@@ -1,0 +1,277 @@
+"""Exhaustively screen BUMI motion reset frames in the MJLab environment.
+
+Each distributed rank receives a motion-aligned dataset shard. Every frame in
+that shard is used once as an environment reset state and simulated for a
+small number of control steps. Motions producing non-finite environment rows
+are written to rank-local result files; this script never moves or edits data.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+from pathlib import Path
+from types import MethodType
+
+import hydra
+import torch
+from omegaconf import DictConfig, OmegaConf
+from tensordict import TensorDict
+
+import active_adaptation as aa
+
+
+FILE_PATH = Path(__file__).resolve().parent
+CONFIG_PATH = FILE_PATH.parent / "cfg"
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _append_bad_paths(path: Path, paths: list[str]) -> None:
+    if not paths:
+        return
+    with path.open("a", encoding="utf-8") as stream:
+        for motion_path in paths:
+            stream.write(motion_path + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+@hydra.main(config_path=str(CONFIG_PATH), config_name="train", version_base=None)
+def main(cfg: DictConfig) -> None:
+    OmegaConf.resolve(cfg)
+    OmegaConf.set_struct(cfg, False)
+
+    screen_cfg = cfg.get("screen", {})
+    output_dir = Path(str(screen_cfg.get("output_dir"))).expanduser().resolve()
+    steps = int(screen_cfg.get("steps", 12))
+    max_frames = int(screen_cfg.get("max_frames", -1))
+    action_std = float(screen_cfg.get("action_std", 0.0))
+    resume = bool(screen_cfg.get("resume", True))
+    filenames_path = screen_cfg.get("filenames_path", None)
+    if steps <= 0:
+        raise ValueError("screen.steps must be positive")
+    if max_frames == 0 or max_frames < -1:
+        raise ValueError("screen.max_frames must be -1 or positive")
+    if action_std < 0:
+        raise ValueError("screen.action_std must be non-negative")
+
+    motion_cfg = cfg.task.command.motion_cfgs.bumi_v2
+    motion_cfg.shard = True
+    if filenames_path:
+        motion_cfg.filenames_path = str(filenames_path)
+
+    # Keep screening deterministic. Startup randomization is persistent per
+    # environment slot and can otherwise make one bad slot falsely condemn
+    # every different motion assigned to it in successive batches.
+    cfg.task.randomization = {}
+    zero_range = {
+        "x": [0.0, 0.0],
+        "y": [0.0, 0.0],
+        "z": [0.0, 0.0],
+        "roll": [0.0, 0.0],
+        "pitch": [0.0, 0.0],
+        "yaw": [0.0, 0.0],
+    }
+    cfg.task.command.pose_range = zero_range
+    cfg.task.command.velocity_range = zero_range
+    cfg.task.command.init_joint_pos_noise = 0.0
+    cfg.task.command.init_joint_vel_noise = 0.0
+    cfg.task.input.action.min_delay = 0
+    cfg.task.input.action.max_delay = 0
+    cfg.task.input.action.alpha_range = [1.0, 1.0]
+    cfg.headless = True
+    cfg.eval_render = False
+    aa.init(cfg, auto_rank=True)
+
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    bad_path = output_dir / f"bad_paths.rank_{rank:03d}.txt"
+    progress_path = output_dir / f"progress.rank_{rank:03d}.json"
+    done_path = output_dir / f"done.rank_{rank:03d}.json"
+
+    if done_path.exists() and resume:
+        print(f"Screen rank {rank}/{world_size} already complete: {done_path}")
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        return
+    if not resume:
+        for path in (bad_path, progress_path, done_path):
+            path.unlink(missing_ok=True)
+
+    from active_adaptation.envs import _EnvBase
+    from active_adaptation.helpers import _ensure_backend_env_imported
+
+    _ensure_backend_env_imported(str(cfg.backend))
+    env_cls = _EnvBase.registry[cfg.task.get("env_class", "MjlabBackendEnv")]
+    env = env_cls(cfg.task, str(cfg.device), headless=True)
+    env.set_seed(int(cfg.seed) + rank)
+    command = env.command_manager
+    dataset = command.dataset
+
+    if not hasattr(dataset, "motion_paths") or not hasattr(dataset, "lengths"):
+        raise TypeError(f"Unsupported screening dataset: {type(dataset)!r}")
+    motion_paths = [str(Path(path).resolve()) for path in dataset.motion_paths]
+    lengths_cpu = dataset.lengths.detach().to(device="cpu", dtype=torch.long)
+    if lengths_cpu.numel() == 0:
+        raise RuntimeError("Screening shard contains no motions")
+    cumulative_cpu = torch.cumsum(lengths_cpu, dim=0)
+    total_frames = int(cumulative_cpu[-1].item())
+    if max_frames > 0:
+        total_frames = min(total_frames, max_frames)
+
+    state: dict[str, torch.Tensor] = {}
+
+    def _forced_sample_motions(self, env_ids, *, terminated=None):
+        del terminated
+        ids = state["motion_ids"].index_select(0, env_ids)
+        starts = state["start_ts"].index_select(0, env_ids)
+        self.motion_ids.index_copy_(0, env_ids, ids)
+        self.motion_len.index_copy_(0, env_ids, self.dataset.lengths[ids])
+        self.t.index_copy_(0, env_ids, starts)
+        self.first_sample_motion = False
+
+    command._sample_motions = MethodType(_forced_sample_motions, command)
+
+    next_frame = 0
+    bad_motions: set[str] = set()
+    if resume and progress_path.exists():
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        next_frame = int(progress.get("next_frame", 0))
+    if resume and bad_path.exists():
+        bad_motions.update(
+            line.strip()
+            for line in bad_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+
+    num_envs = int(env.num_envs)
+    action_dim = int(env.action_manager.action_dim)
+    device = torch.device(cfg.device)
+    cumulative = cumulative_cpu.to(device=device)
+    generator = torch.Generator(device=device)
+    generator.manual_seed(int(cfg.seed) + 100003 * rank)
+    started_at = time.monotonic()
+    batch_index = next_frame // num_envs
+    retired_envs = torch.zeros(num_envs, dtype=torch.bool, device=device)
+
+    print(
+        f"Screen rank {rank}/{world_size}: motions={len(motion_paths)} "
+        f"frames={total_frames} envs={num_envs} steps={steps} "
+        f"action_std={action_std} resume_frame={next_frame}"
+    )
+
+    while next_frame < total_frames:
+        work_env_ids = (~retired_envs).nonzero(as_tuple=False).squeeze(-1)
+        if not work_env_ids.numel():
+            raise RuntimeError(
+                "All environment slots became non-finite; resume the screen "
+                "to continue from the saved frame with fresh simulator state"
+            )
+        work_count = min(int(work_env_ids.numel()), total_frames - next_frame)
+        work_env_ids = work_env_ids[:work_count]
+        batch_end = next_frame + work_count
+        linear = torch.arange(next_frame, batch_end, device=device, dtype=torch.long)
+        motion_ids_work = torch.bucketize(linear, cumulative, right=True)
+        previous_end = torch.zeros_like(linear)
+        has_previous = motion_ids_work > 0
+        previous_end[has_previous] = cumulative[motion_ids_work[has_previous] - 1]
+        start_ts_work = linear - previous_end
+
+        forced_ids = torch.zeros(num_envs, device=device, dtype=torch.long)
+        forced_starts = torch.zeros(num_envs, device=device, dtype=torch.long)
+        forced_ids[work_env_ids] = motion_ids_work
+        forced_starts[work_env_ids] = start_ts_work
+        state["motion_ids"] = forced_ids
+        state["start_ts"] = forced_starts
+
+        env._nonfinite_rows_previous.zero_()
+        env._nonfinite_motion_ids_logged.clear()
+        env.reset()
+        invalid_any = torch.zeros(num_envs, dtype=torch.bool, device=device)
+
+        for _ in range(steps):
+            actions = torch.randn(
+                (num_envs, action_dim),
+                device=device,
+                generator=generator,
+            )
+            if action_std != 1.0:
+                actions.mul_(action_std)
+            step_td = TensorDict(
+                {"action": actions},
+                batch_size=[num_envs],
+                device=device,
+            )
+            env._step(step_td)
+            invalid = env._nonfinite_rows_previous.clone()
+            newly_invalid = invalid & ~retired_envs
+            invalid_any |= newly_invalid
+            retired_envs |= newly_invalid
+            if invalid.any():
+                bad_env_ids = invalid.nonzero(as_tuple=False).squeeze(-1)
+                state["motion_ids"][bad_env_ids] = 0
+                state["start_ts"][bad_env_ids] = 0
+                reset_td = TensorDict(
+                    {"_reset": invalid.reshape(num_envs, 1)},
+                    batch_size=[num_envs],
+                    device=device,
+                )
+                env._reset(reset_td)
+
+        bad_work = invalid_any[work_env_ids]
+        new_bad_paths: list[str] = []
+        if bad_work.any():
+            bad_ids = torch.unique(motion_ids_work[bad_work]).cpu().tolist()
+            for motion_id in bad_ids:
+                motion_path = motion_paths[int(motion_id)]
+                if motion_path not in bad_motions:
+                    bad_motions.add(motion_path)
+                    new_bad_paths.append(motion_path)
+            _append_bad_paths(bad_path, new_bad_paths)
+
+        next_frame = batch_end
+        batch_index += 1
+        progress = {
+            "rank": rank,
+            "world_size": world_size,
+            "next_frame": next_frame,
+            "total_frames": total_frames,
+            "bad_motions": len(bad_motions),
+            "retired_envs": int(retired_envs.sum().item()),
+            "elapsed_s": time.monotonic() - started_at,
+        }
+        _atomic_write(progress_path, json.dumps(progress, sort_keys=True) + "\n")
+        if new_bad_paths or batch_index % 10 == 0 or next_frame == total_frames:
+            print(
+                f"Screen rank {rank}: frames={next_frame}/{total_frames} "
+                f"bad={len(bad_motions)} new_bad={len(new_bad_paths)} "
+                f"retired_envs={int(retired_envs.sum().item())}"
+            )
+
+    summary = {
+        "rank": rank,
+        "world_size": world_size,
+        "motions": len(motion_paths),
+        "frames": total_frames,
+        "bad_motions": len(bad_motions),
+        "retired_envs": int(retired_envs.sum().item()),
+        "steps": steps,
+        "action_std": action_std,
+        "elapsed_s": time.monotonic() - started_at,
+    }
+    _atomic_write(done_path, json.dumps(summary, sort_keys=True) + "\n")
+    print(f"Screen complete: {json.dumps(summary, sort_keys=True)}")
+    env.close()
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
+if __name__ == "__main__":
+    main()

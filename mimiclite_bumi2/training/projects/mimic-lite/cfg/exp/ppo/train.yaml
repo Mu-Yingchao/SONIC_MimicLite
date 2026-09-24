@@ -1,0 +1,18 @@
+# @package _global_
+
+defaults:
+  - /algo/ppo/module: roa_student
+  - override /algo: mimic_lite_ppo
+
+total_iters: 4000
+checkpoint_interval: 1000
+upload_interval: 1000
+
+algo:
+  entropy_coef_start: 0.01
+  entropy_coef_end: 0.002
+  entropy_decay_start: 0.75
+  entropy_decay_end: 1.0
+
+task:
+  num_envs: 8192

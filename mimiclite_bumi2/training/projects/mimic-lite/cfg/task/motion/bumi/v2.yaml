@@ -1,0 +1,8 @@
+# @package task.command
+
+# BUMI motion data is intentionally isolated from all G1 motion groups.
+motion_cfgs:
+  bumi_v2:
+    path: /data2/zcx/datasets/any4hdmi-bumi-v2/motions/score1
+    weight: 1.0
+    full_motion: true

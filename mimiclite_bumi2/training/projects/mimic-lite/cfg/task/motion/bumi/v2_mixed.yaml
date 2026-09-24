@@ -1,0 +1,18 @@
+# @package task.command
+
+# Three-way mixture: ordinary score1, curated high-dynamic motions, and dance3.
+# train.sh and play.sh prompt for all three weights; these defaults are used by
+# direct Hydra invocations.
+motion_cfgs:
+  bumi_v2_score1:
+    path: /data2/zcx/datasets/any4hdmi-bumi-v2/motions/score1
+    weight: 0.8
+    full_motion: true
+  bumi_v2_highdynamic:
+    path: /data2/zcx/datasets/any4hdmi-bumi-v2/motions/score_highdynamic
+    weight: 0.1
+    full_motion: true
+  bumi_v2_dance3:
+    path: /data2/zcx/datasets/any4hdmi-bumi-v2/motions/score_highdynamic_dance3
+    weight: 0.1
+    full_motion: true

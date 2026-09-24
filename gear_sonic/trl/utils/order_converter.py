@@ -235,55 +235,6 @@ class H2Converter(IsaacLabMuJoCoConverter):
     FOOT_BODY_NAMES = ["left_ankle_roll_link", "right_ankle_roll_link"]
 
 
-class Bumi3Converter(IsaacLabMuJoCoConverter):
-    """BUMI3 的 Isaac Lab/MuJoCo 关节与刚体顺序转换器。
-
-    BUMI3 机器人模块采用延迟导入，避免 ``order_converter -> robots -> mdp ->
-    commands -> order_converter`` 形成循环依赖。转换本身沿用 SONIC 的通用张量
-    逻辑，不增加网络或训练算法分支。
-    """
-
-    VR_3POINTS_BODY_NAMES = [
-        "l_elbow_pitch_link",
-        "r_elbow_pitch_link",
-        "base_link",
-    ]
-    FOOT_BODY_NAMES = ["l_ankle_roll_link", "r_ankle_roll_link"]
-
-    def __init__(self):
-        from gear_sonic.envs.manager_env.robots.bumi3 import (
-            BUMI3_ISAACLAB_BODY_NAMES,
-            BUMI3_ISAACLAB_TO_MUJOCO_BODY,
-            BUMI3_ISAACLAB_TO_MUJOCO_DOF,
-            BUMI3_LOWER_JOINT_INDICES_MUJOCO,
-            BUMI3_MUJOCO_TO_ISAACLAB_BODY,
-            BUMI3_MUJOCO_TO_ISAACLAB_DOF,
-        )
-
-        self.JOINT_NAMES = BUMI3_ISAACLAB_BODY_NAMES
-        self.DOF_MAPPINGS = {
-            ("isaaclab", "mujoco"): BUMI3_ISAACLAB_TO_MUJOCO_DOF,
-            ("mujoco", "isaaclab"): BUMI3_MUJOCO_TO_ISAACLAB_DOF,
-        }
-        self.BODY_MAPPINGS = {
-            ("isaaclab", "mujoco"): BUMI3_ISAACLAB_TO_MUJOCO_BODY,
-            ("mujoco", "isaaclab"): BUMI3_MUJOCO_TO_ISAACLAB_BODY,
-        }
-        self.LOWER_JOINT_INDICES_MUJOCO = BUMI3_LOWER_JOINT_INDICES_MUJOCO
-
-    @property
-    def vr_3points_mujoco_indices(self):
-        """返回 BUMI3 三个跟踪点在完整 MuJoCo body 顺序中的索引。"""
-        mujoco_names = [self.JOINT_NAMES[i] for i in self.isaaclab_to_mujoco_body]
-        return [mujoco_names.index(name) for name in self.VR_3POINTS_BODY_NAMES]
-
-    @property
-    def foot_mujoco_indices(self):
-        """返回 BUMI3 双脚在完整 MuJoCo body 顺序中的索引。"""
-        mujoco_names = [self.JOINT_NAMES[i] for i in self.isaaclab_to_mujoco_body]
-        return [mujoco_names.index(name) for name in self.FOOT_BODY_NAMES]
-
-
 class Bumi2Converter(IsaacLabMuJoCoConverter):
     """BUMI2 的 Isaac Lab/MuJoCo 关节与刚体顺序转换器。
 
@@ -343,7 +294,6 @@ def get_order_converter(robot_type: str | None = None) -> IsaacLabMuJoCoConverte
         "g1": G1Converter,
         "g1_model_12_dex": G1Converter,
         "h2": H2Converter,
-        "bumi3": Bumi3Converter,
         "bumi2": Bumi2Converter,
     }
     if normalized_type not in converter_types:

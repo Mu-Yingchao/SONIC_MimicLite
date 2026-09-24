@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>rl_controllers_bumi3</name>
+  <version>0.1.0</version>
+  <description>Isolated Bumi3 RL deployment controller with 21-DOF and 13-DOF policy modes.</description>
+  <maintainer email="huaxinghuang@noetixrobotics.com">Noetix Team</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>controller_interface</depend>
+  <exec_depend>controller_manager</exec_depend>
+  <depend>controller_manager_msgs</depend>
+  <depend>dynamic_reconfigure</depend>
+  <depend>gazebo_msgs</depend>
+  <depend>kdl_parser</depend>
+  <depend>legged_common</depend>
+  <depend>message_generation</depend>
+  <depend>robot_state_publisher</depend>
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>tf</depend>
+
+  <export>
+    <controller_interface plugin="${prefix}/rl_controllers_bumi3_plugins.xml"/>
+  </export>
+</package>

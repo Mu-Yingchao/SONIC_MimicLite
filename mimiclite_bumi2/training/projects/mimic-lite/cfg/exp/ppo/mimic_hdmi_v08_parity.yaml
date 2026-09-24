@@ -1,0 +1,10 @@
+# @package _global_
+
+defaults:
+  - /algo/ppo/module: large
+  - override /algo: mimic_lite_ppo
+
+exp_name: mimic-hdmi-v08-parity-8x8192-seed0
+total_iters: 4000
+checkpoint_interval: 1000
+upload_interval: 1000

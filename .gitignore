@@ -258,3 +258,32 @@ models/
 # Downloaded from HuggingFace (hf download)
 sample_data/
 sonic_release/
+
+# ---------------------------------------------------------------------------
+# MimicLite-BUMI2（同事的训练框架 + 真机部署代码，vendored 进本仓库）
+# 代码进 Git，运行产物和大二进制不进。
+# ---------------------------------------------------------------------------
+mimiclite_bumi2/training/venv/
+mimiclite_bumi2/training/outputs/
+mimiclite_bumi2/training/.cache/
+mimiclite_bumi2/training/**/*.egg-info/
+mimiclite_bumi2/deploy/build/
+mimiclite_bumi2/deploy/devel/
+mimiclite_bumi2/deploy/logs/
+mimiclite_bumi2/deploy/.catkin_tools/
+# 只忽略部署目录里的预编译库，不用全局 *.so/*.a（会误伤仓库其他已跟踪文件）
+mimiclite_bumi2/deploy/**/*.a
+mimiclite_bumi2/deploy/**/*.so
+mimiclite_bumi2/deploy/**/*.so.*
+
+# ---------------------------------------------------------------------------
+# 测试数据：小的动作 npz/pkl 作为可复现的测试 fixture 进 Git；
+# 策略权重（*.pt/*.onnx 已在上面忽略）、渲染视频和原始大数据不进。
+# ---------------------------------------------------------------------------
+test_data/renders/
+test_data/motions/raw_from_noetix9/
+# USD 资产只给 IsaacLab 后端用；我们跑 mjlab 后端（读 MJCF），163M 的 USD 不进 Git。
+# 文件仍保留在本地磁盘上，需要切 IsaacLab 后端时直接可用。
+mimiclite_bumi2/training/**/*.usd
+mimiclite_bumi2/training/**/*.usda
+mimiclite_bumi2/training/**/*.usdc

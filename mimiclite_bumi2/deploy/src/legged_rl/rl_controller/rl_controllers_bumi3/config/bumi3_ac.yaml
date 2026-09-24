@@ -1,0 +1,61 @@
+LeggedRobotCfg:
+  # Physical Bumi3 resources in full-body policy action order.  Runtime
+  # control resolves these names directly and does not use Bumi resource names.
+  joint_names:
+    - leg_l1_joint
+    - leg_r1_joint
+    - waist_1_joint
+    - leg_l2_joint
+    - leg_r2_joint
+    - arm_l1_joint
+    - arm_r1_joint
+    - leg_l3_joint
+    - leg_r3_joint
+    - arm_l2_joint
+    - arm_r2_joint
+    - leg_l4_joint
+    - leg_r4_joint
+    - arm_l3_joint
+    - arm_r3_joint
+    - leg_l5_joint
+    - leg_r5_joint
+    - arm_l4_joint
+    - arm_r4_joint
+    - leg_l6_joint
+    - leg_r6_joint
+
+  # Position vectors follow the physical joint_names order above.
+  lie_joint_positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  stand_joint_positions: [-0.1495, -0.1495, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2618, -0.2618, 0.3215, 0.3215, 0.0, 0.0, -0.1720, -0.1720, 0.0, 0.0, 0.0, 0.0]
+
+  # Physical joints driven by the 13-DOF policy, in policy action order.
+  joint_names_13dof:
+    - leg_l1_joint
+    - leg_r1_joint
+    - waist_1_joint
+    - leg_l2_joint
+    - leg_r2_joint
+    - leg_l3_joint
+    - leg_r3_joint
+    - leg_l4_joint
+    - leg_r4_joint
+    - leg_l5_joint
+    - leg_r5_joint
+    - leg_l6_joint
+    - leg_r6_joint
+
+  control:
+    decimation: 40
+
+  normalization:
+    clip_scales:
+      clip_observations: 18.0
+      clip_actions: 18.0
+
+  size:
+    actions_size: 21
+    observations_size: 71
+    observations_dance_size: 114
+    actions_13dof_size: 13
+    observations_13dof_size: 47
+    stack_size: 5

@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Generate a BUMI URDF containing collisions only for load-bearing links.
+
+The source URDF is never modified. Joint/actuator housing collisions are
+removed; the remaining torso, arm, leg, and sole collisions are simple
+primitives aligned with the actual link directions.
+"""
+
+from pathlib import Path
+import xml.etree.ElementTree as ET
+
+ROOT = Path("active_adaptation/assets/BUMI/BM2-V2.0")
+SOURCE = ROOT / "urdf/bumi_v2_0810_rl.urdf"
+OUTPUT = ROOT / "urdf/bumi_v2_0904_rl_collision.urdf"
+
+
+def vec(values):
+    return " ".join(f"{float(value):.9g}" for value in values)
+
+
+def primitive(name, xyz, shape, **kwargs):
+    collision = ET.Element("collision", {"name": name})
+    ET.SubElement(collision, "origin", {"xyz": vec(xyz), "rpy": "0 0 0"})
+    geometry = ET.SubElement(collision, "geometry")
+    if shape == "box":
+        ET.SubElement(geometry, "box", {"size": vec(kwargs["size"])})
+    elif shape == "cylinder":
+        ET.SubElement(geometry, "cylinder", {
+            "radius": f"{kwargs['radius']:.9g}",
+            "length": f"{kwargs['length']:.9g}",
+        })
+    else:
+        raise ValueError(shape)
+    return collision
+
+
+# These are deliberately link volumes, not fitted motor/gearbox envelopes.
+# URDF cylinders are aligned with the local +Z axis.
+LINK_COLLISIONS = {
+    "base_link": ("box", (-0.00015, 0.00003, 0.05269), {"size": (0.108, 0.102, 0.123)}),
+    "waist_yaw_link": ("cylinder", (0.0, 0.0, 0.190), {"radius": 0.080, "length": 0.360}),
+
+    # Upper arms: shoulder-yaw frame toward the elbow.
+    "l_arm_yaw_link": ("cylinder", (0.005, 0.0, -0.045), {"radius": 0.025, "length": 0.090}),
+    "r_arm_yaw_link": ("cylinder", (0.005, 0.0, -0.045), {"radius": 0.025, "length": 0.090}),
+    # Forearms.
+    "l_elbow_pitch_link": ("cylinder", (0.0, 0.0, -0.100), {"radius": 0.025, "length": 0.180}),
+    "r_elbow_pitch_link": ("cylinder", (0.0, 0.0, -0.100), {"radius": 0.025, "length": 0.180}),
+
+    # Thigh links: hip-yaw frame toward the knee.
+    "l_leg_yaw_link": ("cylinder", (0.005, 0.0, -0.050), {"radius": 0.035, "length": 0.100}),
+    "r_leg_yaw_link": ("cylinder", (0.005, 0.0, -0.050), {"radius": 0.035, "length": 0.100}),
+    # Shins: knee frame toward the ankle.
+    "l_knee_pitch_link": ("cylinder", (0.009, 0.0, -0.120), {"radius": 0.032, "length": 0.220}),
+    "r_knee_pitch_link": ("cylinder", (0.009, 0.0, -0.120), {"radius": 0.032, "length": 0.220}),
+
+    # One sole box replaces each set of eight 5 mm support spheres.
+    "l_ankle_roll_link": ("box", (0.029, 0.0, -0.046), {"size": (0.162, 0.080, 0.010)}),
+    "r_ankle_roll_link": ("box", (0.029, 0.0, -0.046), {"size": (0.162, 0.080, 0.010)}),
+}
+
+tree = ET.parse(SOURCE)
+robot = tree.getroot()
+robot.set("name", "bumi_v2_0810_rl_link_collisions")
+removed_links = []
+for link in robot.findall("link"):
+    link_name = link.get("name")
+    old_collisions = link.findall("collision")
+    for collision in old_collisions:
+        link.remove(collision)
+    if old_collisions and link_name not in LINK_COLLISIONS:
+        removed_links.append(link_name)
+    if link_name in LINK_COLLISIONS:
+        shape, xyz, parameters = LINK_COLLISIONS[link_name]
+        collision_name = (
+            f"{link_name}_foot_box" if link_name.endswith("ankle_roll_link")
+            else f"{link_name}_link_collision"
+        )
+        link.append(primitive(collision_name, xyz, shape, **parameters))
+
+ET.indent(tree, space="  ")
+tree.write(OUTPUT, encoding="utf-8", xml_declaration=True)
+print(f"Wrote {OUTPUT}")
+print(f"kept_link_collisions={len(LINK_COLLISIONS)}")
+print("removed_joint_housing_collisions=" + ",".join(removed_links))

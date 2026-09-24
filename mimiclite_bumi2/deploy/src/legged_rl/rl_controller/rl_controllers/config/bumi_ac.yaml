@@ -1,0 +1,73 @@
+LeggedRobotCfg:
+  joint_names:
+    - l_leg_pitch_joint
+    - r_leg_pitch_joint
+    - waist_yaw_joint
+    - l_leg_roll_joint
+    - r_leg_roll_joint
+    - l_arm_pitch_joint
+    - r_arm_pitch_joint
+    - l_leg_yaw_joint
+    - r_leg_yaw_joint
+    - l_arm_roll_joint
+    - r_arm_roll_joint
+    - l_knee_pitch_joint
+    - r_knee_pitch_joint
+    - l_arm_yaw_joint
+    - r_arm_yaw_joint
+    - l_ankle_pitch_joint
+    - r_ankle_pitch_joint
+    - l_elbow_pitch_joint
+    - r_elbow_pitch_joint
+    - l_ankle_roll_joint
+    - r_ankle_roll_joint
+
+  # 12-DOF walking policy order resolved by Isaac Lab in robot joint order.
+  joint_names_12dof_walk:
+    - l_leg_pitch_joint
+    - r_leg_pitch_joint
+    - l_leg_roll_joint
+    - r_leg_roll_joint
+    - l_leg_yaw_joint
+    - r_leg_yaw_joint
+    - l_knee_pitch_joint
+    - r_knee_pitch_joint
+    - l_ankle_pitch_joint
+    - r_ankle_pitch_joint
+    - l_ankle_roll_joint
+    - r_ankle_roll_joint
+
+  # The requested 13-DOF jump file currently exports 12 leg actions in this order.
+  joint_names_13dof_jump:
+    - l_leg_yaw_joint
+    - l_leg_roll_joint
+    - l_leg_pitch_joint
+    - l_knee_pitch_joint
+    - l_ankle_pitch_joint
+    - l_ankle_roll_joint
+    - r_leg_yaw_joint
+    - r_leg_roll_joint
+    - r_leg_pitch_joint
+    - r_knee_pitch_joint
+    - r_ankle_pitch_joint
+    - r_ankle_roll_joint
+  
+  control:
+    decimation: 10
+
+  normalization:
+    clip_scales:
+      clip_observations: 18.0
+      clip_actions: 18.0
+
+  size:
+    actions_size: 21
+    observations_size: 72
+    observations_dance_size: 399
+    actions_12dof_walk_size: 12
+    observations_12dof_walk_size: 44
+    actions_13dof_jump_size: 12
+    observations_13dof_jump_size: 45
+    stack_size: 5
+    # mimic-lite command tensor size (informational; runtime reads deploy JSON)
+    command_dance_size: 240

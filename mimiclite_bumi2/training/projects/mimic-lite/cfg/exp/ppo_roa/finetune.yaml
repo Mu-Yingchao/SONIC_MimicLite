@@ -1,0 +1,24 @@
+# @package _global_
+
+defaults:
+  - /task/observation/command_long: joint
+  - /algo/ppo_roa/module: large
+  - override /algo: ppo_roa_finetune
+
+total_iters: 1000
+checkpoint_interval: 1000
+upload_interval: 1000
+
+algo:
+  freeze_vecnorm: true
+  opt: muon
+  policy_lr: 0.0001
+  critic_lr: 0.0001
+  max_grad_norm: 1.0
+  # Finetune starts directly from the teacher's terminal exploration/KL levels.
+  entropy_coef_start: 0.002
+  entropy_coef_end: 0.002
+  entropy_decay_start: 0.75
+  entropy_decay_end: 1.0
+  desired_kl: 0.005
+  desired_kl_end: 0.005

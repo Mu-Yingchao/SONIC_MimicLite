@@ -1,0 +1,954 @@
+60、服务器不跟本地一个局域网，采用端口转发
+1.1 本地电脑的 ~/.ssh/config 文件，对应服务器的Host 添加以下，这会建立一条加密通道，把远程服务器上的 7897 端口映射到本地
+  # 自动建立远程端口转发隧道 (把远程 127.0.0.1:7897 转发到本地 127.0.0.1:7897)
+  RemoteForward 7897 127.0.0.1:7897
+1.2 服务器测试连通性
+  curl -v http://127.0.0.1:7897
+
+2.1 服务器~/.bashrc和~/.profile添加以下，让联网走7897端口代理
+  export http_proxy=http://127.0.0.1:7897
+  export https_proxy=http://127.0.0.1:7897
+  export HTTP_PROXY=http://127.0.0.1:7897
+  export HTTPS_PROXY=http://127.0.0.1:7897
+  export no_proxy=localhost,127.0.0.1
+
+2.2 删除vscode服务器端缓存并重新加载窗口
+  rm -rf ~/.vscode-server
+  
+  
+  
+  
+  
+  服务器程序
+   ↓
+127.0.0.1:7898   ← 服务器上的代理入口，只属于你
+   ↓
+SSH RemoteForward 加密隧道
+   ↓
+你本地电脑 127.0.0.1:7897
+   ↓
+Clash Verge / Mihomo
+   ↓
+代理节点
+   ↓
+Internet
+
+
+
+
+
+
+
+# Yuanjie 服务器通过 SSH RemoteForward 使用本地 Clash：操作指南
+
+## 一、适用场景
+
+服务器和本地电脑**不在同一个局域网**，服务器自身没有方便的代理，希望让服务器通过 SSH 隧道使用本地电脑上的 Clash。
+
+当前环境：
+
+```text
+本地电脑：
+用户：yingchaomu
+主机：bj-dl-091
+Clash Mixed Port：127.0.0.1:7897
+
+远程服务器：
+SSH Alias：yuanjie-server
+HostName：117.161.121.54
+Port：22115
+Linux 用户：muyingchao
+hostname：RTX4090-gpu-014
+HOME：/home/muyingchao
+```
+
+因为服务器是多人共享的，服务器端代理端口使用：
+
+```text
+7898
+```
+
+避免和同事使用的端口冲突。
+
+最终链路：
+
+```text
+服务器程序
+    ↓
+服务器 127.0.0.1:7898
+    ↓
+SSH RemoteForward 加密隧道
+    ↓
+本地电脑 127.0.0.1:7897
+    ↓
+本地 Clash
+    ↓
+当前 Clash 节点
+    ↓
+Internet
+```
+
+---
+
+# 二、第一步：确认服务器端口 7898 没被占用
+
+登录服务器：
+
+```bash
+ssh yuanjie-server
+```
+
+服务器执行：
+
+```bash
+ss -lnt | grep 7898
+```
+
+如果**没有任何输出**：
+
+```text
+说明 7898 当前没有监听，可以使用。
+```
+
+注意：
+
+有些终端会因为 `grep` 没匹配到内容显示红色叉，这是因为 `grep` 返回退出码 1，**不是服务器报错**。
+
+如果已经有：
+
+```text
+127.0.0.1:7898
+```
+
+在监听，则换一个端口，例如：
+
+```text
+7899
+```
+
+---
+
+# 三、第二步：修改本地 SSH config
+
+这是整个方法最容易搞混的地方。
+
+## 必须修改的是本地文件
+
+路径：
+
+```bash
+/home/yingchaomu/.ssh/config
+```
+
+简写：
+
+```bash
+~/.ssh/config
+```
+
+这里的 `~` 是：
+
+```text
+/home/yingchaomu
+```
+
+不是服务器的：
+
+```text
+/home/muyingchao
+```
+
+本地执行：
+
+```bash
+nano ~/.ssh/config
+```
+
+`yuanjie-server` 配置写成：
+
+```sshconfig
+Host yuanjie-server
+    HostName 117.161.121.54
+    Port 22115
+    User muyingchao
+
+    # 服务器 127.0.0.1:7898 -> 本地 Clash 127.0.0.1:7897
+    RemoteForward 7898 127.0.0.1:7897
+
+    ExitOnForwardFailure yes
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+
+    PreferredAuthentications password,keyboard-interactive
+    PubkeyAuthentication no
+```
+
+其中最核心的是：
+
+```sshconfig
+RemoteForward 7898 127.0.0.1:7897
+```
+
+含义：
+
+```text
+服务器监听：
+127.0.0.1:7898
+
+收到流量后通过 SSH 隧道转发到：
+
+本地电脑：
+127.0.0.1:7897
+```
+
+所以：
+
+```text
+7898 = 服务器侧端口
+7897 = 本地 Clash 端口
+```
+
+**不要因为服务器使用 7898，就把本地 Clash 改成 7898。**
+
+---
+
+# 四、第三步：重新建立 SSH 连接
+
+修改：
+
+```bash
+~/.ssh/config
+```
+
+后，已经存在的 SSH 连接不会自动加载新配置。
+
+所以需要断开：
+
+```bash
+exit
+```
+
+然后从本地重新：
+
+```bash
+ssh yuanjie-server
+```
+
+如果：
+
+```sshconfig
+ExitOnForwardFailure yes
+```
+
+已经开启，那么如果服务器的 7898 被占用，SSH 会直接提示端口转发失败。
+
+---
+
+# 五、第四步：确认 RemoteForward 已建立
+
+重新登录服务器后执行：
+
+```bash
+ss -lnt | grep 7898
+```
+
+正常应该看到：
+
+```text
+LISTEN 0 128 127.0.0.1:7898 ...
+```
+
+通常还可能看到：
+
+```text
+LISTEN 0 128 [::1]:7898 ...
+```
+
+只要出现：
+
+```text
+LISTEN
+127.0.0.1:7898
+```
+
+就说明 SSH 隧道建立成功。
+
+---
+
+# 六、第五步：先直接测试代理隧道
+
+服务器执行：
+
+```bash
+curl -x http://127.0.0.1:7898 https://api.ipify.org
+```
+
+正常返回一个公网 IP，例如：
+
+```text
+47.128.154.1
+```
+
+这说明：
+
+```text
+服务器
+→ 7898
+→ SSH 隧道
+→ 本地 7897
+→ Clash
+→ Internet
+```
+
+已经打通。
+
+再测试 GitHub：
+
+```bash
+curl -x http://127.0.0.1:7898 -I https://github.com
+```
+
+正常应看到：
+
+```text
+HTTP/1.1 200 Connection established
+HTTP/2 200
+```
+
+测试 Anthropic：
+
+```bash
+curl -x http://127.0.0.1:7898 -I https://api.anthropic.com
+```
+
+可能看到：
+
+```text
+HTTP/1.1 200 Connection established
+HTTP/2 404
+```
+
+这里的：
+
+```text
+404
+```
+
+不代表代理失败。
+
+关键是已经：
+
+```text
+200 Connection established
+```
+
+说明 HTTPS 隧道成功。
+
+---
+
+# 七、第六步：服务器配置环境变量
+
+前面的：
+
+```bash
+curl -x ...
+```
+
+只是显式告诉 curl 使用代理。
+
+如果想让：
+
+```text
+curl
+git
+pip
+wget
+Claude Code
+部分 Python 网络程序
+```
+
+默认使用代理，需要设置服务器环境变量。
+
+服务器文件：
+
+```bash
+/home/muyingchao/.bashrc
+```
+
+简写：
+
+```bash
+~/.bashrc
+```
+
+服务器执行：
+
+```bash
+nano ~/.bashrc
+```
+
+加入：
+
+```bash
+# ===== Local Clash via SSH RemoteForward =====
+
+export http_proxy=http://127.0.0.1:7898
+export https_proxy=http://127.0.0.1:7898
+export HTTP_PROXY=http://127.0.0.1:7898
+export HTTPS_PROXY=http://127.0.0.1:7898
+
+export ALL_PROXY=socks5h://127.0.0.1:7898
+export all_proxy=socks5h://127.0.0.1:7898
+
+export no_proxy=localhost,127.0.0.1
+export NO_PROXY=localhost,127.0.0.1
+```
+
+注意必须是纯文本：
+
+```bash
+http://127.0.0.1:7898
+```
+
+不要复制成 Markdown 形式：
+
+```text
+[http://127.0.0.1:7898](http://127.0.0.1:7898)
+```
+
+保存后：
+
+```bash
+source ~/.bashrc
+```
+
+---
+
+# 八、第七步：检查环境变量
+
+服务器：
+
+```bash
+env | grep -i proxy
+```
+
+正常应看到：
+
+```text
+http_proxy=http://127.0.0.1:7898
+https_proxy=http://127.0.0.1:7898
+HTTP_PROXY=http://127.0.0.1:7898
+HTTPS_PROXY=http://127.0.0.1:7898
+ALL_PROXY=socks5h://127.0.0.1:7898
+all_proxy=socks5h://127.0.0.1:7898
+no_proxy=localhost,127.0.0.1
+NO_PROXY=localhost,127.0.0.1
+```
+
+---
+
+# 九、第八步：测试“默认代理”是否生效
+
+现在不要写：
+
+```bash
+-x http://127.0.0.1:7898
+```
+
+直接：
+
+```bash
+curl https://api.ipify.org
+```
+
+如果仍然返回代理出口 IP，例如：
+
+```text
+47.128.154.1
+```
+
+说明 `.bashrc` 已经生效。
+
+再测试：
+
+```bash
+curl -I https://github.com
+```
+
+如果正常：
+
+```text
+HTTP/1.1 200 Connection established
+HTTP/2 200
+```
+
+则配置完成。
+
+---
+
+# 十、本地 Clash 切节点后，服务器会不会同步切换？
+
+会。
+
+服务器并不知道实际选择了哪个节点。
+
+服务器只知道：
+
+```text
+把流量发送到 127.0.0.1:7898
+```
+
+而：
+
+```text
+服务器 7898
+↓
+SSH
+↓
+本地 Clash 7897
+```
+
+真正选择节点的是本地 Clash。
+
+所以：
+
+```text
+本地 Clash：日本节点
+→ 服务器走日本节点
+
+本地 Clash：新加坡节点
+→ 服务器后续新连接走新加坡节点
+
+本地 Clash：美国节点
+→ 服务器后续新连接走美国节点
+```
+
+不需要修改：
+
+```text
+服务器 ~/.bashrc
+本地 ~/.ssh/config
+RemoteForward
+```
+
+也不需要重新 SSH。
+
+验证方法：
+
+服务器先：
+
+```bash
+curl https://api.ipify.org
+```
+
+然后在本地 Clash 切换节点。
+
+再执行：
+
+```bash
+curl https://api.ipify.org
+```
+
+如果 IP 改变，就证明同步切换成功。
+
+---
+
+# 十一、VS Code Remote-SSH 怎么使用这套配置？
+
+VS Code 必须连接 SSH Alias：
+
+```text
+yuanjie-server
+```
+
+即：
+
+```text
+Ctrl + Shift + P
+
+Remote-SSH: Connect to Host...
+
+yuanjie-server
+```
+
+因为：
+
+```sshconfig
+RemoteForward 7898 127.0.0.1:7897
+```
+
+写在：
+
+```sshconfig
+Host yuanjie-server
+```
+
+这一段下面。
+
+VS Code 建立 SSH 时也会读取：
+
+```bash
+/home/yingchaomu/.ssh/config
+```
+
+因此 VS Code Remote-SSH 本身就可以建立同样的 RemoteForward。
+
+远程 VS Code Terminal 中可以检查：
+
+```bash
+ss -lnt | grep 7898
+```
+
+以及：
+
+```bash
+env | grep -i proxy
+```
+
+再测试：
+
+```bash
+curl https://api.ipify.org
+```
+
+---
+
+# 十二、服务器有没有 ~/.ssh/config？
+
+当前这个方案**服务器根本不需要 `~/.ssh/config`**。
+
+因为：
+
+```text
+本地电脑 = SSH Client
+服务器 = SSH Server
+```
+
+所以负责：
+
+```text
+怎么连接服务器
+用户名是什么
+端口是多少
+RemoteForward 怎么建立
+```
+
+的是本地：
+
+```bash
+/home/yingchaomu/.ssh/config
+```
+
+服务器端主要修改：
+
+```bash
+/home/muyingchao/.bashrc
+```
+
+记忆方式：
+
+```text
+本地 ~/.ssh/config
+负责“怎么连 + 怎么建隧道”
+
+服务器 ~/.bashrc
+负责“程序联网时走哪个代理”
+```
+
+---
+
+# 十三、多人共享服务器时为什么要用不同端口？
+
+假设同事已经：
+
+```text
+服务器 127.0.0.1:7897
+→ 同事本地 Clash 7897
+```
+
+那么你不能再让服务器监听：
+
+```text
+127.0.0.1:7897
+```
+
+所以你的配置使用：
+
+```text
+服务器 7898
+→ 你本地 Clash 7897
+```
+
+即：
+
+```sshconfig
+RemoteForward 7898 127.0.0.1:7897
+```
+
+注意：
+
+**服务器端端口必须不同，本地端口可以相同。**
+
+因为你和同事是两台不同本地电脑：
+
+```text
+同事电脑 127.0.0.1:7897
+你的电脑 127.0.0.1:7897
+```
+
+完全不冲突。
+
+真正可能冲突的是共享服务器上的：
+
+```text
+127.0.0.1:7897
+127.0.0.1:7898
+```
+
+---
+
+# 十四、什么时候代理会失效？
+
+这套方案不是“服务器自己运行 Clash”。
+
+服务器是在**借用你的本地 Clash**。
+
+因此以下任何一项断开都会导致代理失效：
+
+```text
+本地电脑关机
+本地电脑睡眠
+本地网络断开
+Clash 退出
+代理节点不可用
+SSH 连接中断
+RemoteForward 未建立
+```
+
+尤其注意：
+
+```text
+服务器 ~/.bashrc
+```
+
+里的代理变量即使还存在：
+
+```bash
+http_proxy=http://127.0.0.1:7898
+```
+
+如果 SSH 隧道已经断了，程序仍然会尝试访问 7898，然后出现：
+
+```text
+Connection refused
+Connection reset
+Connection timed out
+```
+
+---
+
+# 十五、快速故障排查顺序
+
+以后发现服务器不能联网，严格按照下面顺序检查。
+
+### 1. 本地 Clash 是否正常
+
+本地：
+
+```bash
+curl -x http://127.0.0.1:7897 https://api.ipify.org
+```
+
+成功：
+
+```text
+本地 Clash 正常
+```
+
+失败：
+
+```text
+先修本地 Clash，不用看服务器。
+```
+
+### 2. 服务器 7898 是否监听
+
+服务器：
+
+```bash
+ss -lnt | grep 7898
+```
+
+有：
+
+```text
+LISTEN ... 127.0.0.1:7898
+```
+
+说明隧道存在。
+
+没有：
+
+```text
+SSH RemoteForward 没建立。
+```
+
+重新从本地：
+
+```bash
+ssh yuanjie-server
+```
+
+### 3. 测 SSH 隧道
+
+服务器：
+
+```bash
+curl -x http://127.0.0.1:7898 https://api.ipify.org
+```
+
+成功：
+
+```text
+隧道 + Clash 正常
+```
+
+失败：
+
+```text
+检查 SSH / Clash。
+```
+
+### 4. 检查服务器环境变量
+
+```bash
+env | grep -i proxy
+```
+
+确认都是：
+
+```text
+127.0.0.1:7898
+```
+
+### 5. 测试默认代理
+
+```bash
+curl https://api.ipify.org
+```
+
+成功：
+
+```text
+全部正常。
+```
+
+---
+
+# 十六、最简恢复流程
+
+以后服务器重连后，代理不通，可以优先做：
+
+本地：
+
+```bash
+ssh yuanjie-server
+```
+
+服务器：
+
+```bash
+ss -lnt | grep 7898
+```
+
+然后：
+
+```bash
+source ~/.bashrc
+```
+
+再：
+
+```bash
+curl https://api.ipify.org
+```
+
+如果能返回公网 IP，恢复完成。
+
+---
+
+# 十七、当前最终配置备忘
+
+## 本地
+
+文件：
+
+```bash
+/home/yingchaomu/.ssh/config
+```
+
+核心：
+
+```sshconfig
+Host yuanjie-server
+    HostName 117.161.121.54
+    Port 22115
+    User muyingchao
+
+    RemoteForward 7898 127.0.0.1:7897
+    ExitOnForwardFailure yes
+    ServerAliveInterval 60
+    ServerAliveCountMax 3
+
+    PreferredAuthentications password,keyboard-interactive
+    PubkeyAuthentication no
+```
+
+## 服务器
+
+文件：
+
+```bash
+/home/muyingchao/.bashrc
+```
+
+核心：
+
+```bash
+export http_proxy=http://127.0.0.1:7898
+export https_proxy=http://127.0.0.1:7898
+export HTTP_PROXY=http://127.0.0.1:7898
+export HTTPS_PROXY=http://127.0.0.1:7898
+
+export ALL_PROXY=socks5h://127.0.0.1:7898
+export all_proxy=socks5h://127.0.0.1:7898
+
+export no_proxy=localhost,127.0.0.1
+export NO_PROXY=localhost,127.0.0.1
+```
+
+## 三条最重要的验证命令
+
+服务器：
+
+```bash
+ss -lnt | grep 7898
+```
+
+```bash
+curl -x http://127.0.0.1:7898 https://api.ipify.org
+```
+
+```bash
+curl https://api.ipify.org
+```
+
+只要这三步依次正常，就可以判断：
+
+```text
+SSH RemoteForward 正常
+→ 本地 Clash 正常
+→ 服务器环境变量正常
+→ 服务器代理联网正常
+```
+

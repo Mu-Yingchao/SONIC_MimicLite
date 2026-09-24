@@ -1,0 +1,20 @@
+<launch>
+  <arg
+    name="model" />
+  <param
+    name="robot_description"
+    textfile="$(find BM2-V2.0-总装-URDF-0810)/urdf/BM2-V2.0-总装-URDF-0810.urdf" />
+  <node
+    name="joint_state_publisher_gui"
+    pkg="joint_state_publisher_gui"
+    type="joint_state_publisher_gui" />
+  <node
+    name="robot_state_publisher"
+    pkg="robot_state_publisher"
+    type="robot_state_publisher" />
+  <node
+    name="rviz"
+    pkg="rviz"
+    type="rviz"
+    args="-d $(find BM2-V2.0-总装-URDF-0810)/urdf.rviz" />
+</launch>

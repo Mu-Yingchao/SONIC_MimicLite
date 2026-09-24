@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="policy_file"
+       default="$(find rl_controllers_bumi3)/policy/bumi3/policy_walkrun_0318.onnx"/>
+  <arg name="policy_file_dance"
+       default="$(find rl_controllers_bumi3)/policy/bumi3/policyDance.onnx"/>
+  <arg name="policy_file_13dof"
+       default="$(find rl_controllers_bumi3)/policy/bumi3/policy_13dof_walk_0315.onnx"/>
+  <arg name="motion_file"
+       default="$(find rl_controllers_bumi3)/motion_files/bumi3/motion.json"/>
+
+  <include file="$(find rl_controllers_bumi3)/launch/joy_teleop.launch"/>
+  <rosparam file="$(find rl_controllers_bumi3)/config/bumi3_kd.yaml" command="load"/>
+  <param name="policyFile" value="$(arg policy_file)"/>
+  <param name="policyFileDance" value="$(arg policy_file_dance)"/>
+  <param name="policyFile13DOF" value="$(arg policy_file_13dof)"/>
+  <param name="motionFilePath" value="$(arg motion_file)"/>
+  <rosparam file="$(find rl_controllers_bumi3)/config/controllers.yaml" command="load"/>
+  <rosparam file="$(find rl_controllers_bumi3)/config/bumi3_ac.yaml" command="load"/>
+
+  <node name="controller_spawner" pkg="controller_manager" type="spawner"
+        respawn="false" output="screen" args="controllers/ac_controller"/>
+  <node name="rqt_reconfigure" pkg="rqt_reconfigure"
+        type="rqt_reconfigure" output="screen"/>
+</launch>

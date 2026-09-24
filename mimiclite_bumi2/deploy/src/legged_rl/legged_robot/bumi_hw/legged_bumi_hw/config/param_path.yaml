@@ -1,0 +1,2 @@
+user_param_path:     config/config.yaml
+hardware_param_path: config/hardware.yaml

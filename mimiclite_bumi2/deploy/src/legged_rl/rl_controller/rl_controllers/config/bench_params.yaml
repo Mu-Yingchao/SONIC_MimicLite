@@ -1,0 +1,43 @@
+# 台架正弦测试参数（AcController_bench.cpp 用）。
+# 启动时由 load_ac_controller.launch 自动加载，无需手动操作。
+# 想在测试过程中改：编辑本文件后执行
+#     rosparam load $(rospack find rl_controllers)/config/bench_params.yaml
+# 控制器在每一步开始时重新读取，下一步即生效，不用重新编译。
+bench:
+  frequency:   0.30      # 正弦频率 [Hz]，一个周期 1/f 秒
+  ramp_time:   2.0       # 缓升到摆动底端 [s]
+  settle_time: 1.0       # 静置读基线 [s]
+  cycles:      5         # 每对关节测几个周期
+
+  # ---- 增益覆盖，按关节配置 ----
+  # key = 关节名去掉 l_/r_ 前缀和 _joint 后缀，左右共用一个 key
+  #       例: l_knee_pitch_joint 和 r_knee_pitch_joint 都查 knee_pitch
+  # 值为负 = 用 policy metadata 里该关节自己的值（注释里标了实际值）
+  # 只作用于当前正在测的关节；其余保持姿态的关节始终用 metadata
+  kp:
+    leg_pitch:   -1.0    # metadata 50.0
+    leg_roll:    -1.0    # metadata 50.0
+    leg_yaw:     -1.0    # metadata 30.0
+    knee_pitch:  -1.0    # metadata 40.0
+    ankle_pitch: 8.0    # metadata  8.0
+    ankle_roll:  5    # metadata 12.0
+    arm_pitch:   -1.0    # metadata  8.0
+    arm_roll:    -1.0    # metadata  8.0
+    arm_yaw:     -1.0    # metadata  8.0
+    elbow_pitch: -1.0    # metadata  8.0
+    waist_yaw:   -1.0    # metadata 80.0
+
+  kd:
+    leg_pitch:   -1.0    # metadata 5.0
+    leg_roll:    -1.0    # metadata 5.0
+    leg_yaw:     -1.0    # metadata 3.0
+    knee_pitch:  -1.0    # metadata 4.0
+    ankle_pitch: 0.8    # metadata 0.8
+    ankle_roll:  0.5    # metadata 1.5
+    arm_pitch:   -1.0    # metadata 0.8
+    arm_roll:    -1.0    # metadata 0.8
+    arm_yaw:     -1.0    # metadata 0.8
+    elbow_pitch: -1.0    # metadata 0.8
+    waist_yaw:   -1.0    # metadata 4.0
+
+# 注意 ACTR_4325 的驱动器限幅: kp_max 500, kd_max 5.0，超了会被截断

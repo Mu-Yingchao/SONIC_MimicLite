@@ -1,0 +1,38 @@
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}-train-sequential
+  job:
+    chdir: true
+
+headless: true
+exp_name: ${oc.select:task.name,test}-${oc.select:algo.name,none}
+
+backend: mjlab
+device: cuda
+
+app:
+  headless: ${..headless}
+  enable_cameras: ${..eval_render}
+
+total_frames: null
+total_iters: 4000
+eval_render: false
+checkpoint_interval: 1000
+seed: 42
+checkpoint_path: null
+warm_start_checkpoint: null
+stage_iters: {train: 2000, adapt: 2000, finetune: 2000}
+dry_run: false
+export_policy: false
+
+camera_follow: true
+tensorboard: true
+nproc_per_node: 8
+script: projects/mimic-lite/scripts/train.py
+
+defaults:
+  - task: tracking-bumi-v2
+  - algo: ppo_roa_train
+  - algo/ppo_roa/module: large
+  - stages: normal
+  - _self_

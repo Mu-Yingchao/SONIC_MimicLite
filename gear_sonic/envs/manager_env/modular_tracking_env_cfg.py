@@ -16,7 +16,7 @@ import joblib
 import pxr
 
 from gear_sonic.envs.manager_env.mdp import terrain
-from gear_sonic.envs.manager_env.robots import bumi2, bumi3, g1, h2
+from gear_sonic.envs.manager_env.robots import bumi2, g1, h2
 from gear_sonic.trl.utils import common
 
 
@@ -1005,11 +1005,6 @@ class ModularTrackingEnvCfg(ManagerBasedRLEnvCfg):
                 "robot_cfg": h2.H2_CFG,
                 "action_scale": h2.H2_ACTION_SCALE,
                 "isaaclab_to_mujoco_mapping": h2.H2_ISAACLAB_TO_MUJOCO_MAPPING,
-            },
-            "bumi3": {
-                "robot_cfg": bumi3.BUMI3_CFG,
-                "action_scale": bumi3.BUMI3_ACTION_SCALE,
-                "isaaclab_to_mujoco_mapping": bumi3.BUMI3_ISAACLAB_TO_MUJOCO_MAPPING,
             },
             "bumi2": {
                 "robot_cfg": bumi2.BUMI2_CFG,

@@ -1,0 +1,17 @@
+# @package _global_
+
+defaults:
+  - /task/observation/command_long: joint
+  - /algo/ppo_roa/module: large
+  - override /algo: ppo_roa_adapt
+
+total_iters: 500
+checkpoint_interval: 500
+upload_interval: 500
+
+algo:
+  freeze_vecnorm: true
+  train_every: 16
+  opt: muon
+  policy_lr: 0.0003
+  critic_lr: 0.0003

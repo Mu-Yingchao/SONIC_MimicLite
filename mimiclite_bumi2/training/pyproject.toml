@@ -1,0 +1,90 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "active_adaptation"
+version = "0.8.1"
+authors = [
+    {name = "btx0424@SUSTech"}
+]
+keywords = ["robotics", "rl"]
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "setproctitle",
+    "hydra-core",
+    "omegaconf",
+    "wandb",
+    "einops",
+    "termcolor",
+    "onnxruntime",
+    "onnxscript",
+    "jaxtyping",
+    "tensordict",
+    "torchrl",
+    "torch==2.11",
+    "torchvision==0.26.0",
+    "imageio",
+    "linuxfd",
+    "pdbpp",
+    "scipy",
+    "trimesh",
+    "matplotlib>=3.11.1",
+    "typer",
+]
+
+[project.optional-dependencies]
+render = [
+    "fvdb-core[viewer]==0.5.1+pt211.cu130",
+    # Robot mesh rasterization for GS composite (needs torch already installed).
+    "nvdiffrast",
+    "ninja",
+]
+
+[project.scripts]
+aa-project = "active_adaptation.cli:main"
+aa-discover-projects = "active_adaptation.cli:aa_discover_projects"
+aa-list-tasks = "active_adaptation.cli:aa_list_tasks"
+
+[project.entry-points."active_adaptation.projects"]
+facet = "projects.facet"
+mimic = "projects.mimic"
+metamorph = "projects.metamorph"
+
+[tool.setuptools.packages]
+find = { where = ["."], include = [
+    "active_adaptation*",
+    "scripts*",
+    "projects.facet*",
+    "projects.mimic*",
+    "projects.metamorph*"
+    ] }
+
+[tool.setuptools.package-data]
+"*" = ["**/*"]
+
+[tool.pyright]
+# typeCheckingMode = "strict"
+reportIncompatibleMethodOverride = "error"
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "fvdb"
+url = "https://d36m13axqqhiit.cloudfront.net/simple"
+explicit = true
+
+[tool.uv]
+# nvdiffrast compiles CUDA extensions against the env's torch (official install).
+no-build-isolation-package = ["nvdiffrast"]
+
+[tool.uv.sources]
+# Force CUDA 12.8-compatible PyTorch wheels instead of default cu13x builds.
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+fvdb-core = { index = "fvdb" }
+nvdiffrast = { git = "https://github.com/NVlabs/nvdiffrast", rev = "253ac4fcea7de5f396371124af597e6cc957bfae" }

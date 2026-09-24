@@ -57,13 +57,8 @@ def _validated_lower_joint_indices(
     assert len(indices) == len(set(indices)), (
         f"lower_joint_indices_mujoco 存在重复索引: {indices}"
     )
-    if robot_type.lower() == "bumi3":
-        assert indices == list(range(9, 21)), (
-            f"BUMI3 lower-body MuJoCo 索引必须为 9..20，实际为 {indices}"
-        )
     if robot_type.lower() == "bumi2":
-        # BUMI2 与 BUMI3 的关节命名和排列顺序完全一致（见 bumi2.py 顶部说明），
-        # 因此下肢 MuJoCo 索引范围同样固定为 9..20，用同一条断言防止静默错位。
+        # BUMI2 的下肢 MuJoCo 索引范围固定为 9..20，用断言防止静默错位。
         assert indices == list(range(9, 21)), (
             f"BUMI2 lower-body MuJoCo 索引必须为 9..20，实际为 {indices}"
         )

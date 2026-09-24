@@ -1,0 +1,32 @@
+# ---- catkin 构建产物（编译生成，不入库）----
+build/
+devel/
+devel_isolated/
+build_isolated/
+install/
+logs/
+.catkin_tools/
+.catkin_workspace
+
+# ---- 运行日志（每次跑都在变，且体积很大）----
+# rl_controllers/data_logs、legged_bumi_hw/data_logs 里的 log.csv /
+# log_hw.csv / debug_logs 都是运行时写的，只保留目录结构。
+data_logs/
+bench_data/
+
+# ---- RL 运动文件与策略权重（体积大，不入库）----
+src/legged_rl/rl_controller/rl_controllers/motion_files/
+src/legged_rl/rl_controller/rl_controllers/policy/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.stl
+*.STL

@@ -1,0 +1,11 @@
+controllers:
+  joint_state_controller:
+    type: joint_state_controller/JointStateController
+    publish_rate: 100
+  legged_controller:
+    type: legged/RLControllerBase
+  ac_controller:
+    type: legged/AcController
+    # empty_world.world: max_step_size=0.0005 → controller ~2000 Hz.
+    # Training policy / motion are 50 Hz ⇒ 2000 / 50 = 40.
+    mimic_decimation: 40

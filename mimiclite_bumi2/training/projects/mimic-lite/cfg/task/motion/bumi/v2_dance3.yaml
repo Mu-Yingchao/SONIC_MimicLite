@@ -1,0 +1,8 @@
+# @package task.command
+
+# High-dynamic dance motions imported from the dance_3 CSV collection.
+motion_cfgs:
+  bumi_v2_dance3:
+    path: /data2/zcx/datasets/any4hdmi-bumi-v2/motions/score_highdynamic_dance3
+    weight: 1.0
+    full_motion: true

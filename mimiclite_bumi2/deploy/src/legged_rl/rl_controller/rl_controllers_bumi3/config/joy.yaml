@@ -1,0 +1,95 @@
+teleop:
+  walk:
+    type: topic
+    message_type: geometry_msgs/Twist
+    topic_name: cmd_vel
+    deadman_buttons: []
+    axis_mappings:
+      - axis: 3
+        target: angular.z
+        scale: 1.0
+      - axis: 1
+        target: linear.x
+        scale: 1.8
+      - axis: 0
+        target: linear.y
+        scale: 0.5
+
+
+  start_control:
+    type: topic
+    message_type: std_msgs/Float32
+    topic_name: start_control
+    deadman_buttons: [ 7 ]
+    axis_mappings:
+      - button: 7
+        target: data
+        scale: 2
+        offset: 0
+        
+  switch_mode:
+    type: topic
+    message_type: std_msgs/Float32
+    topic_name: switch_mode
+    deadman_buttons: [6]
+    axis_mappings:
+      - button: 6
+        target: data
+        scale: 2
+        offset: 0
+  
+  position_control:
+    type: topic
+    message_type: std_msgs/Float32
+    topic_name: position_control
+    deadman_buttons: [8]
+    axis_mappings:
+      - button: 8
+        target: data
+        scale: 2
+        offset: 0
+
+  walk_mode:
+    type: topic
+    message_type: std_msgs/Float32
+    topic_name: walk_mode
+    deadman_buttons: [0]
+    axis_mappings:
+      - button: 0
+        target: data
+        scale: 2
+        offset: 0
+
+  dance_mode:
+    type: topic
+    message_type: std_msgs/Float32
+    topic_name: dance_mode
+    deadman_buttons: [5, 2]
+    axis_mappings:
+      - button: 0
+        target: data
+        scale: 2
+        offset: 0
+
+  walk13dof_mode:
+    type: topic
+    message_type: std_msgs/Float32
+    topic_name: walk13dof_mode
+    deadman_buttons: [5, 1]
+    axis_mappings:
+      - button: 4
+        target: data
+        scale: 2
+        offset: 0
+
+  vel_limit:
+    type: topic
+    message_type: std_msgs/Float32
+    topic_name: vel_limit
+    axis_mappings:
+      # cross key up/down (axis 7)
+      - axis: 7
+        target: data
+        scale: 0.5
+        offset: 0
+

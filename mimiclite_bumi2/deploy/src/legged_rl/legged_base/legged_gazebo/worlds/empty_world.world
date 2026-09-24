@@ -1,0 +1,82 @@
+<?xml version="1.0" ?>
+
+<sdf version="1.5">
+    <world name="default">
+        <!-- Target real time factor is the product of max_step_size and real_time_update_rate -->
+        <!-- Negative real_time_update_rate means that Gazebo will run as fast as possible -->
+        <physics type="ode">
+            <type>world</type>
+            <max_step_size>0.0005</max_step_size>
+            <real_time_update_rate>2000</real_time_update_rate>
+            <iters>2000</iters>
+        </physics>
+        <!-- A global light source -->
+        <include>
+            <uri>model://sun</uri>
+        </include>
+        <!-- A ground plane -->
+        <include>
+            <uri>model://ground_plane</uri>
+        </include>
+        <model name="box0">
+            <static>true</static>
+            <pose>4 0 0.2 0 -0.2 0</pose>
+            <link name="link">
+                <collision name="collision">
+                <geometry>
+                    <box>
+                    <size>2 5 .01</size>
+                    </box>
+                </geometry>
+                </collision>
+                <visual name="visual">
+                <geometry>
+                    <box>
+                    <size>2 5 .01</size>
+                    </box>
+                </geometry>
+                </visual>
+            </link>
+        </model>
+        <model name="box1">
+            <static>true</static>
+            <pose>6 0 0.4 0 0 0</pose>
+            <link name="link">
+                <collision name="collision">
+                <geometry>
+                    <box>
+                    <size>2 5 .01</size>
+                    </box>
+                </geometry>
+                </collision>
+                <visual name="visual">
+                <geometry>
+                    <box>
+                    <size>2 5 .01</size>
+                    </box>
+                </geometry>
+                </visual>
+            </link>
+        </model>
+        <model name="box2">
+            <static>true</static>
+            <pose>8 0 0.2 0 0.2 0</pose>
+            <link name="link">
+                <collision name="collision">
+                <geometry>
+                    <box>
+                    <size>2 5 .01</size>
+                    </box>
+                </geometry>
+                </collision>
+                <visual name="visual">
+                <geometry>
+                    <box>
+                    <size>2 5 .01</size>
+                    </box>
+                </geometry>
+                </visual>
+            </link>
+        </model>
+    </world>
+</sdf>
