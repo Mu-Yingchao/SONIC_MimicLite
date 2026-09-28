@@ -156,6 +156,34 @@ def create_manager_env(config, device, args_cli):
 def main(config: OmegaConf):
     simulator_type = "IsaacSim"
     env_config = config.manager_env
+
+    # 固定 encoder（与 eval_agent_trl.py 的 use_encoder 同语义）。
+    #
+    # 训练时 encoder_sample_probs 是 {g1: 1.0, smpl: 1.0}，每次 env.reset() 会按
+    # 这个分布随机挑一个 encoder——训练要的就是这种混合。但**导出/诊断时必须钉死**：
+    # export_bridge_motion 是多窗口拼接，每个窗口 reset 一次，不固定的话不同窗口
+    # 可能走不同 encoder，拼出来的动作是混合来源，既不可复现也说不清它代表哪条链路；
+    # inspect_g1_recon 报的重建误差同样会变成两个 encoder 的混合值。
+    #
+    # 用法：++use_encoder=g1 或 ++use_encoder=smpl。
+    # 注意 smpl 链路还需要同时提供 ++manager_env.commands.motion.motion_lib_cfg
+    # .smpl_motion_file=<SMPL PKL 目录>，否则 SMPL 观测为空、encoder 无法工作。
+    use_encoder = config.get("use_encoder", None)
+    if use_encoder is not None:
+        encoder_sample_probs = config.manager_env.commands.motion.encoder_sample_probs
+        if encoder_sample_probs is None:
+            raise ValueError("配置里没有 encoder_sample_probs，无法固定 encoder")
+        if use_encoder not in encoder_sample_probs:
+            raise ValueError(
+                f"use_encoder={use_encoder!r} 不在可选 encoder 中: "
+                f"{list(encoder_sample_probs)}"
+            )
+        for encoder in encoder_sample_probs:
+            if encoder != use_encoder:
+                encoder_sample_probs[encoder] = 0.0
+        print(f"固定使用 encoder: {use_encoder}")  # noqa: T201
+        print(f"encoder_sample_probs: {encoder_sample_probs}")  # noqa: T201
+
     from transformers import HfArgumentParser
     from trl import ModelConfig, PPOConfig, ScriptArguments
 
