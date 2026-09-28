@@ -506,6 +506,29 @@ def main(override_config: omegaconf.OmegaConf):
             if not encoder_names:
                 raise ValueError("Universal-token actor 没有可导出的 encoder")
 
+            # 要导出哪个 decoder 由配置决定，不能写死。G1/BUMI3 训的是 `g1_dyn`
+            # （直接出关节力矩的动力学解码器），而 BUMI2 的配置里只有 `g1_kin`
+            # ——BUMI2 训练的目标不是练出可部署策略，动力学那一层交给同事已经
+            # 训好的 MimicLite-BUMI2 追踪策略，SONIC 这边只负责重建运动学参考。
+            # 写死 g1_dyn 会让 BUMI2 导出直接失败。
+            available_decoders = list(getattr(actor_module, "decoders", {}) or {})
+            decoder_name = config.get("export_decoder_name", None)
+            if decoder_name is None:
+                if len(available_decoders) == 1:
+                    decoder_name = available_decoders[0]
+                elif "g1_dyn" in available_decoders:
+                    decoder_name = "g1_dyn"
+                else:
+                    raise ValueError(
+                        f"无法自动确定要导出的 decoder，可选: {available_decoders}；"
+                        "请用 ++export_decoder_name=<名字> 显式指定"
+                    )
+            if available_decoders and decoder_name not in available_decoders:
+                raise ValueError(
+                    f"decoder {decoder_name!r} 不存在，可选: {available_decoders}"
+                )
+            print(f"导出使用的 decoder: {decoder_name}")  # noqa: T201
+
             for encoder_name in encoder_names:
                 if encoder_name not in actor_module.encoder_input_features:
                     raise ValueError(
@@ -514,7 +537,7 @@ def main(override_config: omegaconf.OmegaConf):
                 inference_helpers.export_universal_token_module_as_onnx(
                     actor_module,
                     encoder_name=encoder_name,
-                    decoder_name="g1_dyn",
+                    decoder_name=decoder_name,
                     path=exported_policy_path,
                     exported_model_name=exported_onnx_name.replace(
                         ".onnx", f"_{encoder_name}.onnx"
@@ -530,7 +553,7 @@ def main(override_config: omegaconf.OmegaConf):
             )
             inference_helpers.export_universal_token_decoder_as_onnx(
                 actor_module,
-                decoder_name="g1_dyn",
+                decoder_name=decoder_name,
                 path=exported_policy_path,
                 exported_model_name=exported_onnx_name.replace(".onnx", "_decoder.onnx"),
                 batch_size=1,
