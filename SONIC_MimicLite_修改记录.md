@@ -4597,3 +4597,58 @@ BUMI2 在 MimicLite 侧有两份同名但内容不同的 `bumi_v2_0810_rl.xml`�
 部署端从同事服务器搬回本地（`/home/yingchaomu/下载/SONIC_MimicLite_deploy/`），
 之后不再在同事服务器上跑 play。完整操作命令见
 `docs/source/getting_started/local_mimiclite_bumi2_deploy.md`。
+
+## 2026-09-28：SONIC 上层完全本地化，SMPL 链路（项目目标）首次端到端验证
+
+### 1. 去掉 Isaac Lab 依赖的依据
+
+此前每导一条动作都要上 Noetix-9 起 Isaac Lab，这是测试数据长期只有一条的
+直接原因。实测发现这个依赖是不必要的：
+
+把 ONNX 输入里本体感知那 690 维换成任意随机值（幅度 0.1~2.0，各重复多次），
+输出变化恒为 **0.00000000**；而改 tokenizer 会带来 0.44 量级变化。两个模型
+（_g1 和 _smpl）都如此。`g1_kin` 是纯运动学重建解码器，本来就不读机器人状态。
+
+所以离线生成时本体感知填零即可，结果与带真实机器人状态时逐位相同。新增
+`tools_local/sonic_offline_bridge.py`，纯 NumPy + onnxruntime。
+
+### 2. 三个静默出错的坑
+
+| 坑 | 症状 | 正确做法 |
+|---|---|---|
+| PKL 的 `dof` 是 MuJoCo 顺序，encoder 吃 IsaacLab 顺序 | 不报错，误差 4.7°→9.6° | 用 manifest 推导的 `mujoco_to_isaac` 重排 |
+| 关节速度用了中心差分 | 误差 5.17°→5.35° | 用前向差分（`torch_humanoid_batch.py:447` 那条路径）；中心差分是动力学门禁在用的 |
+| SMPL 预处理漏了右乘基准旋转的逆 | 误差 21.16°→4.49° | 直接复用 `bumi3_smpl_reference.py` 已验证的实现，不自己重推 |
+
+### 3. 重建精度（walk_forward_loop_003__A022，434 帧）
+
+| 链路 | 平均 | p95 | 最大 |
+|---|---|---|---|
+| Isaac Lab robot（既有基准） | 4.69° | 12.83° | 40.39° |
+| 本地 ONNX robot | 5.17° | 15.83° | 75.90° |
+| **本地 ONNX SMPL** | **4.49°** | 12.11° | 37.25° |
+
+6 条动作平均：robot 7.73°，smpl 7.22°。
+
+### 4. MimicLite 追踪对比（同 6 条动作、8 环境、各 7 次采样）
+
+| | robot | smpl |
+|---|---|---|
+| `motion_timeout` | 0.839 | **0.839** |
+| `body_pos_error` | 0.107 | 0.036 |
+| `body_ori_error` | 0.125 | 0.161 |
+| `root_ori_error` | 0.000 | 0.000 |
+
+两条链路等价。**中途报过一次"SMPL 一半失败"是错的**——那次 `num_envs=2`
+只采到 2 个样本，把随机波动当成了系统性差异，样本提到 8 个后结论反转。
+教训：终止统计是比例量，小样本下不可解读。
+
+约 16% 的失败集中在 `jump_ff_270`、`rage_exaggerated` 这类高动态动作，
+两条链路都失败，指向动作难度与 SONIC 训练量（停在 17600 轮），不是 encoder 问题。
+
+### 5. 结论
+
+项目目标链路 `SMPL pkl → SONIC smpl encoder → token → g1_kin → MimicLite 追踪`
+全程本地跑通并量化。此前汇报的"全链路打通"只覆盖 robot 链路，本条补齐 SMPL。
+
+测试数据从 1 条扩到 12 条（6 动作 × 2 链路），换 pkl 路径即可测任意动作。
