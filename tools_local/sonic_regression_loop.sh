@@ -9,20 +9,20 @@
 #   bash tools_local/sonic_regression_loop.sh                      # 处理所有新 checkpoint 一次
 #   bash tools_local/sonic_regression_loop.sh --steps "8000 10000"  # 只处理指定 step（回填历史）
 #   bash tools_local/sonic_regression_loop.sh --loop 1800           # 每 30 分钟检查一次，常驻
+#   --run <run 目录名>      盯哪个训练 run（默认最早那次 sonic_bumi2_v2）
+#   --baseline <run 目录名>  报告里拿这个 run 的最好成绩当基线
 set -uo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 KEY=".local/keys/noetix9.pem"
 HOST="root@14.103.42.170"
-# 续训写回原 run 目录：每 2000 步一个编号 checkpoint，last.pt 每 500 步覆盖一次
-RUN="/data0/bumi2_sonic_runs/TRL_BUMI2_Track/sonic_bumi2_v2-20260920_155335"
-EXP="$RUN/exported"
+# 每 2000 步一个编号 checkpoint，last.pt 每 500 步覆盖一次
+RUN_ROOT="/data0/bumi2_sonic_runs/TRL_BUMI2_Track"
+RUN_NAME="sonic_bumi2_v2-20260920_155335"
+BASELINE=""
 MIN_FREE_MB="${MIN_FREE_MB:-8000}"
-LOCAL_ONNX="test_data/policies/sonic/regression"
 PY="mimiclite_bumi2/training/venv/mjlab/.venv/bin/python"
-LOG_DIR="test_data/regression"
-mkdir -p "$LOCAL_ONNX" "$LOG_DIR"
 unset VIRTUAL_ENV
 
 remote() {
@@ -129,16 +129,16 @@ run_once() {
         "$HOST:$EXP/model_step_${s6}_${kind}.onnx" "$LOCAL_ONNX/" 2>/dev/null
     done
     say "step $s6：本地评估"
-    "$PY" tools_local/sonic_recon_regression.py evaluate --step "$step" \
+    "$PY" tools_local/sonic_recon_regression.py evaluate --step "$step" --out-dir "$LOG_DIR" \
       --g1-onnx "$LOCAL_ONNX/model_step_${s6}_g1.onnx" \
       --smpl-onnx "$LOCAL_ONNX/model_step_${s6}_smpl.onnx" || say "step $s6：评估失败"
   done
   pull_train_scalars
-  "$PY" tools_local/sonic_recon_regression.py report
+  "$PY" tools_local/sonic_recon_regression.py report "${REPORT_ARGS[@]}"
   local status=$?
   if [ $status -ne 0 ]; then
     date '+%F %T' > "$LOG_DIR/ALERT"
-    "$PY" tools_local/sonic_recon_regression.py report >> "$LOG_DIR/ALERT" 2>&1
+    "$PY" tools_local/sonic_recon_regression.py report "${REPORT_ARGS[@]}" >> "$LOG_DIR/ALERT" 2>&1
     say "⚠ 趋势告警已写入 $LOG_DIR/ALERT"
   else
     rm -f "$LOG_DIR/ALERT"
@@ -151,9 +151,21 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --steps) STEPS="$2"; shift 2 ;;
     --loop) LOOP="$2"; shift 2 ;;
+    --run) RUN_NAME="$2"; shift 2 ;;
+    --baseline) BASELINE="$2"; shift 2 ;;
     *) echo "未知参数 $1"; exit 2 ;;
   esac
 done
+
+# 路径按 run 派生：新 run 的 step 从 0 重新计数，结果、ONNX 都必须按 run 隔离
+RUN="$RUN_ROOT/$RUN_NAME"
+EXP="$RUN/exported"
+LOG_DIR="test_data/regression/$RUN_NAME"
+LOCAL_ONNX="test_data/policies/sonic/regression/$RUN_NAME"
+REPORT_ARGS=(--out-dir "$LOG_DIR")
+[ -n "$BASELINE" ] && REPORT_ARGS+=(--baseline-dir "test_data/regression/$BASELINE")
+mkdir -p "$LOCAL_ONNX" "$LOG_DIR"
+say "盯 run: $RUN_NAME${BASELINE:+   基线: $BASELINE}"
 
 if [ "$LOOP" -gt 0 ]; then
   while true; do run_once "$STEPS"; STEPS=""; sleep "$LOOP"; done

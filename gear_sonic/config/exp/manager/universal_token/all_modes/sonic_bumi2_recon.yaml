@@ -1,0 +1,22 @@
+# @package _global_
+# BUMI2 SONIC：以 g1_kin 重建质量为目标的训练入口。
+#
+# 在 sonic_bumi2 基础上只换辅助损失（见 aux_losses/universal_token/
+# g1_recon_weighted_and_smpl_latent.yaml），网络结构、数据、奖励、终止条件都不变，
+# 仍是完整的官方 SONIC 架构（g1/smpl 双编码器 + FSQ token + g1_dyn 动作解码器 +
+# g1_kin 运动学重建解码器）。
+#
+# 背景：sonic_bumi2 的训练从约 2000 步起 g1_recon 就停在 0.56~0.58，到 20716 步
+# 没有进步。原因有二：
+#   1. g1_recon 系数 0.01，是官方把 g1_kin 当正则项时的权重，没随本项目"g1_kin
+#      即产品"的定位调整；
+#   2. g1_recon 是关节角/关节速度/朝向拼接后等权 MSE，其中 96.9% 是关节速度误差，
+#      而 MimicLite 只读关节角。
+#
+# 推荐用法：从 sonic_bumi2 的 checkpoint 热启动（+resume=false checkpoint=<pt>），
+# 只加载权重、优化器与计数器重新开始，写到新的 run 目录，和旧曲线分开。
+
+defaults:
+  - manager/universal_token/all_modes/sonic_bumi2
+  - override /aux_losses: universal_token/g1_recon_weighted_and_smpl_latent
+  - _self_

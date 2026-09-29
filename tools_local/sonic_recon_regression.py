@@ -47,6 +47,15 @@ PER_MOTION_CSV = OUT_DIR / "per_motion.csv"
 SUMMARY_CSV = OUT_DIR / "summary.csv"
 TRAIN_CSV = OUT_DIR / "train_scalars.csv"
 
+
+def set_out_dir(path: Path) -> None:
+    """每个训练 run 用独立子目录：新 run 的 step 从 0 重新计数，和旧 run 混写会撞号。"""
+    global OUT_DIR, PER_MOTION_CSV, SUMMARY_CSV, TRAIN_CSV
+    OUT_DIR = Path(path)
+    PER_MOTION_CSV = OUT_DIR / "per_motion.csv"
+    SUMMARY_CSV = OUT_DIR / "summary.csv"
+    TRAIN_CSV = OUT_DIR / "train_scalars.csv"
+
 WINDOW = 8  # MimicLite command 观测窗口的步数
 
 # 按动作类别分层（不是按误差分），用来看训练对哪类动作见效、哪类停滞
@@ -208,15 +217,33 @@ def _nearest_train(train: dict[int, dict], step: int) -> dict | None:
     return train[k] if abs(k - step) <= 250 else None
 
 
-def report() -> int:
+def _baseline_best(baseline_dir: Path | None) -> dict[str, tuple[int, float]]:
+    """读另一个 run 的 summary，返回各链路的 (step, 最好平均误差)。"""
+    if baseline_dir is None or not (Path(baseline_dir) / "summary.csv").exists():
+        return {}
+    best: dict[str, tuple[int, float]] = {}
+    with (Path(baseline_dir) / "summary.csv").open(encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            v = float(r["mean_deg"])
+            if r["chain"] not in best or v < best[r["chain"]][1]:
+                best[r["chain"]] = (int(r["step"]), v)
+    return best
+
+
+def report(baseline_dir: Path | None = None) -> int:
     by_chain = _load_summary()
+    baseline = _baseline_best(baseline_dir)
     if not by_chain:
         print("还没有任何回归结果。")
         return 0
     train = _load_train()
 
     print("=" * 96)
-    print("SONIC 上层重建质量回归（固定 21 条测试动作，走部署同款 ONNX 路径）")
+    print(f"SONIC 上层重建质量回归（固定 21 条测试动作，走部署同款 ONNX 路径）  run: {OUT_DIR.name}")
+    if baseline:
+        print(f"基线 = {Path(baseline_dir).name} 的最好成绩：" + "，".join(
+            f"{c} {v:.3f}°(step {s})" for c, (s, v) in sorted(baseline.items())))
+    print("训练侧 loss 列只用于看同一 run 内的趋势；改过 loss 口径的 run 之间数值不可比")
     print("=" * 96)
     for chain in ("smpl", "robot"):
         rows = by_chain.get(chain, [])
@@ -269,6 +296,10 @@ def report() -> int:
                     + f"，均不足 {STALL_TOL:.0%}"
                 )
                 status = max(status, 1)
+        if "smpl" in baseline:
+            bs, bv = baseline["smpl"]
+            print(f"对比基线（{Path(baseline_dir).name} 最好 {bv:.3f}°）：最新 {latest:.3f}°，"
+                  f"{'优于' if latest < bv else '差于'}基线 {100 * abs(bv - latest) / bv:.1f}%")
         if status == 0:
             if len(vals) < STALL_WINDOW + 1:
                 # 点太少时既不能说"正常"也不能说"停滞"，如实说明，避免给出虚假的安心
@@ -287,12 +318,16 @@ def main() -> None:
     ev.add_argument("--step", type=int, required=True)
     ev.add_argument("--g1-onnx", type=Path, required=True)
     ev.add_argument("--smpl-onnx", type=Path, required=True)
-    sub.add_parser("report")
+    ev.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    rp = sub.add_parser("report")
+    rp.add_argument("--out-dir", type=Path, default=OUT_DIR)
+    rp.add_argument("--baseline-dir", type=Path, default=None, help="另一个 run 的回归目录，报告里作为基线")
     args = ap.parse_args()
+    set_out_dir(args.out_dir)
     if args.cmd == "evaluate":
         evaluate(args.step, args.g1_onnx, args.smpl_onnx)
     else:
-        sys.exit(report())
+        sys.exit(report(args.baseline_dir))
 
 
 if __name__ == "__main__":

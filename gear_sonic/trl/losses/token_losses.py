@@ -557,6 +557,64 @@ class G1ReconLoss(nn.Module):
         return _compute_masked_loss(g1_motion_output_pred, g1_motion_output, mask, self.loss_type)
 
 
+class G1ReconLossWeighted(G1ReconLoss):
+    """按分量加权的 g1_kin 重建损失：关节角 / 关节速度 / 根朝向各自取 MSE 再加权。
+
+    为什么需要：G1ReconLoss 对 (关节角 + 关节速度 + 朝向) 拼接后的张量直接取 MSE。
+    关节速度是 50Hz 关节角的差分，量级大（RMS ~1.3 rad/s，关节角 ~0.5 rad）又带高频
+    噪声，平方后主导整个损失。实测 BUMI2 在 step 17600 时 g1_recon=0.57 里 **96.9%
+    来自关节速度**，关节角只占 3.0%，而且速度基本没学会（误差 RMS 1.13 对目标 RMS
+    1.33）。官方 SONIC 里 g1_kin 只是 1% 权重的正则项，这无所谓；但本项目把 g1_kin
+    的输出当作 MimicLite 的参考动作，MimicLite 读的是关节角（ref_joint_pos_future），
+    不读关节速度。于是解码器的容量几乎全花在一个下游根本不用的量上。
+
+    布局前提（commands.py::command_multi_future）：
+        command_multi_future = cat([joint_pos_multi_future(N, F*D),
+                                    joint_vel_multi_future(N, F*D)], dim=1)
+    其 _nonflat 版本只是 reshape 成 (N, F, 2D)，"帧"那一维并不对应真实帧。所以必须
+    先把最后两维摊平回 (N, 2*F*D)，前 F*D 才是关节角、后 F*D 才是关节速度。
+    """
+
+    def __init__(self, loss_type="mse", pos_weight=1.0, vel_weight=1.0, ori_weight=1.0, **kwargs):
+        super().__init__(loss_type=loss_type, **kwargs)
+        if loss_type != "mse":
+            raise ValueError(f"G1ReconLossWeighted 目前只支持 mse，收到 {loss_type!r}")
+        self.pos_weight = float(pos_weight)
+        self.vel_weight = float(vel_weight)
+        self.ori_weight = float(ori_weight)
+
+    def forward(self, loss_inputs):
+        if loss_inputs.get("frame_mask", None) is not None:
+            # command_multi_future_nonflat 的"帧"维不是真实帧（见类说明），按帧施加的 mask
+            # 会错位。BUMI2 未开启可变帧数，这里不应走到；真走到了宁可报错也不静默算错。
+            raise NotImplementedError("G1ReconLossWeighted 不支持 frame_mask（布局与帧维不对齐）")
+
+        tokenizer_obs = loss_inputs["tokenizer_obs"]
+        decoded = loss_inputs["decoded_outputs"]["g1_kin"]
+        cmd_key, ori_key = "command_multi_future_nonflat", "motion_anchor_ori_b_mf_nonflat"
+        outputs = list(loss_inputs["decoders_cfg"]["g1_kin"]["outputs"])
+        if outputs != [cmd_key, ori_key]:
+            raise ValueError(f"G1ReconLossWeighted 假定 g1_kin outputs 为 {[cmd_key, ori_key]}，实际 {outputs}")
+
+        cmd_t, cmd_p = tokenizer_obs[cmd_key], decoded[cmd_key]
+        ori_t, ori_p = tokenizer_obs[ori_key], decoded[ori_key]
+        # 父类在时间维不等长时截断"行"；这里的"行"不是帧，截断会把关节角/速度的
+        # 分界切乱，所以不等长直接报错。
+        if cmd_t.shape != cmd_p.shape or ori_t.shape != ori_p.shape:
+            raise ValueError(
+                f"g1_kin 输出与目标形状不一致：cmd {tuple(cmd_p.shape)} vs {tuple(cmd_t.shape)}，"
+                f"ori {tuple(ori_p.shape)} vs {tuple(ori_t.shape)}"
+            )
+
+        cmd_t = cmd_t.flatten(-2)
+        cmd_p = cmd_p.flatten(-2)
+        half = cmd_t.shape[-1] // 2
+        pos_loss = F.mse_loss(cmd_p[..., :half], cmd_t[..., :half])
+        vel_loss = F.mse_loss(cmd_p[..., half:], cmd_t[..., half:])
+        ori_loss = F.mse_loss(ori_p, ori_t)
+        return self.pos_weight * pos_loss + self.vel_weight * vel_loss + self.ori_weight * ori_loss
+
+
 class G1ReconLossAligned(G1ReconLoss):
     """Same as G1ReconLoss but uses a single key list for target and pred so that
     encoder input = g1_kin output = loss. Expects loss_inputs["recon_target_keys"].

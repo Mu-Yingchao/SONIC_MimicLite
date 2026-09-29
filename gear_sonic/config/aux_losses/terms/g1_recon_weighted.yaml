@@ -1,0 +1,15 @@
+# g1_kin 重建损失的分量加权版（G1ReconLossWeighted）。
+#
+# 键名仍用 g1_recon：aux_loss_coef.g1_recon 和日志里的 loss/aux_g1_recon_avg 都沿用，
+# 但数值口径与原 G1ReconLoss 不同（原来是全部元素等权 MSE），不能和旧曲线直接比。
+# 可比的指标看本地 checkpoint 回归（tools_local/sonic_recon_regression.py）。
+#
+# 权重依据（BUMI2 step 17600 实测原 g1_recon=0.57 的构成）：关节速度占 96.9%、
+# 关节角 3.0%、朝向 0.2%。MimicLite 读的是关节角，不读关节速度，所以关节角给足
+# 权重、速度压到 0.01（保留一点，避免解码出的轨迹完全不顾平滑）。
+g1_recon:
+  _target_: gear_sonic.trl.losses.token_losses.G1ReconLossWeighted
+  loss_type: "mse"
+  pos_weight: 1.0
+  vel_weight: 0.01
+  ori_weight: 1.0

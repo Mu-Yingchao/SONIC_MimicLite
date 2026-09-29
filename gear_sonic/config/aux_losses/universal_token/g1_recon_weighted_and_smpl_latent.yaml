@@ -1,0 +1,21 @@
+# @package algo.config.actor.backbone
+# BUMI2 双编码器 SONIC 的辅助损失（g1_kin 作为"产品"时的版本）。
+#
+# 与 g1_recon_and_smpl_latent.yaml 的唯一区别是 g1_recon 换成分量加权版、系数
+# 0.01 -> 0.1。原配置是官方把 g1_kin 当 1% 权重正则项时的设定；本项目把 g1_kin
+# 的输出当 MimicLite 的参考动作用，原设定下训练 2000 步后重建误差就不再下降。
+#
+# 系数取 0.1 而不是更大：新 loss 只对 210 个关节角元素求均值，原 loss 对 480 个
+# 元素求均值。关节角元素上的梯度 ∝ 系数×权重/元素数，所以 0.1 下关节角梯度约为
+# 原来的 (0.1/210)/(0.01/480) ≈ 23 倍、速度梯度降到约 1/4，而 aux 总量级与原来
+# 持平——不打破 PPO 与 aux 原有的平衡，只把力气从速度挪到关节角。
+
+defaults:
+  - terms/g1_recon_weighted@aux_loss_func
+  - terms/g1_smpl_latent@aux_loss_func
+  - terms/reencoded_smpl_g1_latent@aux_loss_func
+
+aux_loss_coef:
+  g1_recon: 0.1
+  g1_smpl_latent: 1.0
+  reencoded_smpl_g1_latent: 1.0
