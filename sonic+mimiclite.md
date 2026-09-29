@@ -631,6 +631,11 @@ flowchart TD
 
 ![SONIC 上层 + MimicLite 下层混合架构链路图](media/sonic_mimiclite_bridge.png)
 
+> **2026-09-29 更新**：上面的 PNG/SVG 已按实测现状重画（上层是完整官方 SONIC，`g1_dyn` 与
+> `g1_kin` 同训、只部署 `g1_kin`；root 取自源动作不经解码器；离线桥接走纯 ONNX）。下面的
+> Mermaid 代码块是**早期设计稿**，保留作推演记录，与现状不一致处以
+> [sonic_mimiclite_new.md](sonic_mimiclite_new.md) 为准。
+
 > 上图是渲染好的 PNG 静态图片（`media/sonic_mimiclite_bridge.png`），双击/任何图片查看器都能
 > 直接打开；VSCode 里需要点开 Markdown 的 **Preview** 视图（右上角图标或 `Ctrl+Shift+V`）才会
 > 内联显示图片，单纯用文本编辑器打开 `.md` 文件是看不到任何图片的，这一点对下面的 Mermaid

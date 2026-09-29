@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1480 620" font-family="'PingFang SC','Microsoft YaHei',Helvetica,Arial,sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 730" font-family="'PingFang SC','Noto Sans CJK SC','Microsoft YaHei',Helvetica,Arial,sans-serif">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#333333"/>
@@ -6,134 +6,178 @@
     <marker id="arrowDashed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#666666"/>
     </marker>
+    <marker id="arrowRoot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E75B6"/>
+    </marker>
   </defs>
 
-  <rect x="0" y="0" width="1480" height="620" fill="#ffffff"/>
+  <rect x="0" y="0" width="1600" height="730" fill="#ffffff"/>
 
   <!-- ============ section labels ============ -->
-  <text x="90" y="30" font-size="15" font-weight="700" fill="#333">多模态输入</text>
-  <text x="330" y="30" font-size="15" font-weight="700" fill="#6a2f7a">SONIC 上层 — 新训练（复用 BUMI3 经验）</text>
-  <text x="740" y="30" font-size="15" font-weight="700" fill="#175c24">新增桥接层 — 唯一要训练的部分</text>
-  <text x="1050" y="30" font-size="14" font-weight="700" fill="#7a3d0a">MimicLite-BUMI2 下层 — 借用同事，冻结</text>
-  <text x="1380" y="30" font-size="15" font-weight="700" fill="#333">BUMI2</text>
+  <text x="122" y="30" font-size="15" font-weight="700" fill="#333" text-anchor="middle">多模态输入</text>
+  <text x="477" y="30" font-size="15" font-weight="700" fill="#6a2f7a" text-anchor="middle">SONIC 上层 — BUMI2 新训练（完整官方架构）</text>
+  <text x="890" y="30" font-size="15" font-weight="700" fill="#175c24" text-anchor="middle">离线桥接 — 本地纯 ONNX</text>
+  <text x="1262" y="30" font-size="15" font-weight="700" fill="#7a3d0a" text-anchor="middle">MimicLite-BUMI2 下层 — 同事训练 · 冻结</text>
+  <text x="1527" y="30" font-size="15" font-weight="700" fill="#333" text-anchor="middle">BUMI2</text>
 
   <!-- section background bands -->
-  <rect x="20" y="45" width="220" height="500" fill="#BFE3F0" opacity="0.15" rx="10"/>
-  <rect x="270" y="45" width="380" height="500" fill="#E4C6EE" opacity="0.18" rx="10"/>
-  <rect x="680" y="45" width="330" height="500" fill="#BFEAC5" opacity="0.20" rx="10"/>
-  <rect x="1040" y="45" width="290" height="500" fill="#F7D9BF" opacity="0.22" rx="10"/>
-  <rect x="1360" y="45" width="100" height="500" fill="#E8E8E8" opacity="0.30" rx="10"/>
+  <rect x="10" y="45" width="222" height="585" fill="#BFE3F0" opacity="0.15" rx="10"/>
+  <rect x="245" y="45" width="465" height="585" fill="#E4C6EE" opacity="0.18" rx="10"/>
+  <rect x="725" y="45" width="330" height="585" fill="#BFEAC5" opacity="0.20" rx="10"/>
+  <rect x="1070" y="45" width="385" height="585" fill="#F7D9BF" opacity="0.22" rx="10"/>
+  <rect x="1468" y="45" width="122" height="585" fill="#E8E8E8" opacity="0.30" rx="10"/>
 
   <!-- ============ 输入 ============ -->
   <g>
-    <rect x="30" y="80" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
-    <text x="130" y="110" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">Robot 参考动作</text>
-    <text x="130" y="132" font-size="11" text-anchor="middle" fill="#0b2b36">BUMI2 重定向轨迹</text>
+    <rect x="25" y="90" width="195" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
+    <text x="122" y="119" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">Robot 参考 PKL</text>
+    <text x="122" y="141" font-size="11" text-anchor="middle" fill="#0b2b36">BUMI2 · GMR 重定向轨迹</text>
 
-    <rect x="30" y="230" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
-    <text x="130" y="260" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">SMPL / GENMO 动作</text>
-    <text x="130" y="282" font-size="11" text-anchor="middle" fill="#0b2b36">人体动作 / 生成动作</text>
+    <rect x="25" y="250" width="195" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA" stroke-width="2"/>
+    <text x="122" y="279" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="700">SMPL PKL</text>
+    <text x="122" y="301" font-size="11" text-anchor="middle" fill="#0b2b36">人体动作（项目主输入）</text>
 
-    <rect x="30" y="380" width="200" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA"/>
-    <text x="130" y="410" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">PICO 五点重建</text>
-    <text x="130" y="432" font-size="11" text-anchor="middle" fill="#0b2b36">遥操作实时输入</text>
+    <rect x="25" y="410" width="195" height="70" rx="12" fill="#BFE3F0" stroke="#4488AA" stroke-dasharray="5,4"/>
+    <text x="122" y="439" font-size="14" text-anchor="middle" fill="#0b2b36" font-weight="600">PICO 五点重建</text>
+    <text x="122" y="461" font-size="11" text-anchor="middle" fill="#0b2b36">实时遥操（尚未打通）</text>
   </g>
 
-  <!-- ============ SONIC encoders + token ============ -->
+  <!-- ============ SONIC encoders + token + decoders ============ -->
   <g>
-    <rect x="300" y="80" width="190" height="70" rx="12" fill="#E4C6EE" stroke="#9B59B6"/>
-    <text x="395" y="108" font-size="14" text-anchor="middle" fill="#3a1747" font-weight="600">Robot encoder</text>
-    <text x="395" y="128" font-size="11" text-anchor="middle" fill="#3a1747">[2048,1024,512,512]</text>
+    <rect x="260" y="90" width="160" height="70" rx="12" fill="#E4C6EE" stroke="#9B59B6"/>
+    <text x="340" y="119" font-size="14" text-anchor="middle" fill="#3a1747" font-weight="600">Robot encoder</text>
+    <text x="340" y="141" font-size="11" text-anchor="middle" fill="#3a1747">g1 · 关节角/速度 + 朝向</text>
 
-    <rect x="300" y="270" width="190" height="70" rx="12" fill="#E4C6EE" stroke="#9B59B6"/>
-    <text x="395" y="298" font-size="14" text-anchor="middle" fill="#3a1747" font-weight="600">SMPL encoder</text>
-    <text x="395" y="318" font-size="11" text-anchor="middle" fill="#3a1747">[2048,1024,512,512]</text>
+    <rect x="260" y="250" width="160" height="70" rx="12" fill="#E4C6EE" stroke="#9B59B6"/>
+    <text x="340" y="279" font-size="14" text-anchor="middle" fill="#3a1747" font-weight="600">SMPL encoder</text>
+    <text x="340" y="301" font-size="11" text-anchor="middle" fill="#3a1747">局部关键点 + 根朝向</text>
 
-    <rect x="540" y="175" width="90" height="90" rx="14" fill="#E4C6EE" stroke="#9B59B6" stroke-width="2"/>
-    <text x="585" y="210" font-size="13" text-anchor="middle" fill="#3a1747" font-weight="700">共享</text>
-    <text x="585" y="228" font-size="13" text-anchor="middle" fill="#3a1747" font-weight="700">64维 token</text>
-    <text x="585" y="246" font-size="11" text-anchor="middle" fill="#3a1747">FSQ 量化</text>
+    <rect x="445" y="150" width="100" height="110" rx="14" fill="#E4C6EE" stroke="#9B59B6" stroke-width="2"/>
+    <text x="495" y="190" font-size="13" text-anchor="middle" fill="#3a1747" font-weight="700">共享 token</text>
+    <text x="495" y="211" font-size="11" text-anchor="middle" fill="#3a1747">2 × 32 = 64 维</text>
+    <text x="495" y="230" font-size="11" text-anchor="middle" fill="#3a1747">FSQ 量化</text>
+
+    <rect x="570" y="85" width="130" height="95" rx="12" fill="#E4C6EE" stroke="#6a2f7a" stroke-width="2.5"/>
+    <text x="635" y="113" font-size="13" text-anchor="middle" fill="#3a1747" font-weight="700">g1_kin 解码器</text>
+    <text x="635" y="134" font-size="11" text-anchor="middle" fill="#3a1747">运动学重建</text>
+    <text x="635" y="152" font-size="11" text-anchor="middle" fill="#3a1747">未来 10 帧关节角</text>
+    <text x="635" y="171" font-size="11" text-anchor="middle" fill="#175c24" font-weight="700">本项目的产品</text>
+
+    <rect x="570" y="240" width="130" height="95" rx="12" fill="#F2F2F2" stroke="#999999" stroke-dasharray="5,4"/>
+    <text x="635" y="267" font-size="13" text-anchor="middle" fill="#444" font-weight="700">g1_dyn 解码器</text>
+    <text x="635" y="288" font-size="11" text-anchor="middle" fill="#444">PPO 动作头</text>
+    <text x="635" y="306" font-size="11" text-anchor="middle" fill="#444">训练必需 · 不部署</text>
+    <text x="635" y="324" font-size="11" text-anchor="middle" fill="#444">可作实时遥操备选</text>
+
+    <rect x="260" y="390" width="440" height="110" rx="12" fill="#F4E8F8" stroke="#9B59B6"/>
+    <text x="480" y="417" font-size="12.5" text-anchor="middle" fill="#3a1747" font-weight="700">训练（Noetix-9 · IsaacLab · 8 卡 · PPO）</text>
+    <text x="480" y="440" font-size="11" text-anchor="middle" fill="#3a1747">目标：PPO（经 g1_dyn）+ SMPL↔Robot token 对齐</text>
+    <text x="480" y="460" font-size="11" text-anchor="middle" fill="#3a1747">+ g1_recon 分量加权：关节角 1 / 速度 0.01 / 朝向 1（×0.1）</text>
+    <text x="480" y="482" font-size="11" text-anchor="middle" fill="#3a1747">当前 run：sonic_bumi2_recon_v1（热启动自 step 20000）</text>
   </g>
 
-  <!-- ============ Bridge: decoder + frame ============ -->
+  <!-- ============ 离线桥接 ============ -->
   <g>
-    <rect x="700" y="80" width="290" height="90" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
-    <text x="845" y="108" font-size="14" text-anchor="middle" fill="#0d3315" font-weight="700">参考动作解码器（g1_kin 式）</text>
-    <text x="845" y="128" font-size="11" text-anchor="middle" fill="#0d3315">token → 显式 BUMI2 参考动作</text>
-    <text x="845" y="146" font-size="11" text-anchor="middle" fill="#0d3315">joint_pos / joint_vel / body_pos+quat / root</text>
+    <rect x="740" y="85" width="300" height="100" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
+    <text x="890" y="112" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="700">ONNX 编解码（纯本地，无需 IsaacLab）</text>
+    <text x="890" y="134" font-size="11" text-anchor="middle" fill="#0d3315">_g1.onnx（robot）/ _smpl.onnx（SMPL）</text>
+    <text x="890" y="153" font-size="11" text-anchor="middle" fill="#0d3315">本体感知 690 维实测零影响 → 填零</text>
+    <text x="890" y="172" font-size="11" text-anchor="middle" fill="#0d3315">每 5 帧解码 · 取 0.1~0.3s 近端 · 交叉淡化</text>
 
-    <rect x="700" y="230" width="290" height="80" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
-    <text x="845" y="260" font-size="14" text-anchor="middle" fill="#0d3315" font-weight="700">当作一条合法参考动作</text>
-    <text x="845" y="280" font-size="11" text-anchor="middle" fill="#0d3315">可用现有 sim2sim 工具直接回放核验</text>
+    <rect x="740" y="225" width="300" height="95" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
+    <text x="890" y="252" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="700">参考动作 = 重建关节角 + 源动作 root</text>
+    <text x="890" y="275" font-size="11" text-anchor="middle" fill="#0d3315">→ qpos npz（mjlab play）</text>
+    <text x="890" y="295" font-size="11" text-anchor="middle" fill="#0d3315">→ bumi_deploy_motion_v1 JSON（真机）</text>
 
-    <rect x="710" y="420" width="270" height="80" rx="12" fill="#BFEAC5" stroke="#3FA34D" stroke-dasharray="5,4"/>
-    <text x="845" y="450" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="600">离线 / sim2sim 评测</text>
-    <text x="845" y="470" font-size="11" text-anchor="middle" fill="#0d3315">重建误差 · 追踪误差 · 跌倒率</text>
+    <rect x="740" y="355" width="300" height="100" rx="12" fill="#FDE2E1" stroke="#C0504D"/>
+    <text x="890" y="381" font-size="12.5" text-anchor="middle" fill="#6b1d1b" font-weight="700">⚠ 已知问题：root 与重建关节不自洽</text>
+    <text x="890" y="403" font-size="11" text-anchor="middle" fill="#6b1d1b">窗口位移不匹配 0.030 m（GMR 原始 ≤ 0.013）</text>
+    <text x="890" y="422" font-size="11" text-anchor="middle" fill="#6b1d1b">→ play 中 ghost 与机器人越拉越远</text>
+    <text x="890" y="441" font-size="11" text-anchor="middle" fill="#6b1d1b">计划：用 mink 联合 IK 反解自洽 root（借鉴 GMR）</text>
+
+    <rect x="740" y="490" width="300" height="100" rx="12" fill="#BFEAC5" stroke="#3FA34D" stroke-dasharray="5,4"/>
+    <text x="890" y="516" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="700">checkpoint 回归（每 2000 步自动）</text>
+    <text x="890" y="538" font-size="11" text-anchor="middle" fill="#0d3315">21 条测试动作 × robot / SMPL 两链路</text>
+    <text x="890" y="557" font-size="11" text-anchor="middle" fill="#0d3315">SMPL 关节误差 9.15° → 5.47°（step 2k → 20k）</text>
+    <text x="890" y="576" font-size="11" text-anchor="middle" fill="#0d3315">回退 / 停滞自动告警</text>
   </g>
 
   <!-- ============ MimicLite ============ -->
   <g>
-    <rect x="1050" y="80" width="270" height="80" rx="12" fill="#F7D9BF" stroke="#D2782B"/>
-    <text x="1185" y="110" font-size="14" text-anchor="middle" fill="#5a2a05" font-weight="700">ObsRef 观测构造</text>
-    <text x="1185" y="130" font-size="11" text-anchor="middle" fill="#5a2a05">短历史 + 短未来窗口（同事原实现）</text>
+    <rect x="1085" y="85" width="355" height="135" rx="12" fill="#F7D9BF" stroke="#D2782B"/>
+    <text x="1262" y="111" font-size="13" text-anchor="middle" fill="#5a2a05" font-weight="700">观测 639 维 = policy 399 + command 240</text>
+    <text x="1262" y="134" font-size="11" text-anchor="middle" fill="#5a2a05">policy：角速度 / 重力 / 关节角 / 关节速度</text>
+    <text x="1262" y="152" font-size="11" text-anchor="middle" fill="#5a2a05">各 7 步历史 + 3 步历史动作（纯本体）</text>
+    <text x="1262" y="174" font-size="11" text-anchor="middle" fill="#5a2a05">command：参考 root 位置（相对参考 anchor）24</text>
+    <text x="1262" y="192" font-size="11" text-anchor="middle" fill="#5a2a05">参考 root 朝向（相对机器人本体）48</text>
+    <text x="1262" y="210" font-size="11" text-anchor="middle" fill="#5a2a05">参考关节角 168 · 步长 −8 … +4</text>
 
-    <rect x="1050" y="230" width="270" height="80" rx="12" fill="#F7D9BF" stroke="#D2782B"/>
-    <text x="1185" y="260" font-size="14" text-anchor="middle" fill="#5a2a05" font-weight="700">MimicLite-BUMI2 Actor</text>
-    <text x="1185" y="280" font-size="11" text-anchor="middle" fill="#5a2a05">轻量 MLP，PD 接口</text>
+    <rect x="1085" y="265" width="355" height="85" rx="12" fill="#F7D9BF" stroke="#D2782B" stroke-width="2"/>
+    <text x="1262" y="292" font-size="13" text-anchor="middle" fill="#5a2a05" font-weight="700">MimicLite Actor（checkpoint_40000）</text>
+    <text x="1262" y="314" font-size="11" text-anchor="middle" fill="#5a2a05">huge MLP · 输出 21 维关节目标 → PD</text>
+    <text x="1262" y="334" font-size="11" text-anchor="middle" fill="#5a2a05">SMPL 链路追踪成功率 0.839（与 robot 链路相同）</text>
+
+    <rect x="1085" y="390" width="355" height="105" rx="12" fill="#FBEBDC" stroke="#D2782B" stroke-dasharray="5,4"/>
+    <text x="1262" y="417" font-size="12.5" text-anchor="middle" fill="#5a2a05" font-weight="700">运行载体</text>
+    <text x="1262" y="440" font-size="11" text-anchor="middle" fill="#5a2a05">仿真：本地 mjlab + viser 可视化（已验证）</text>
+    <text x="1262" y="460" font-size="11" text-anchor="middle" fill="#5a2a05">真机：ROS1 AcController + ONNX（未验证）</text>
+    <text x="1262" y="480" font-size="11" text-anchor="middle" fill="#5a2a05">注：只读预存参考，实时遥操需改造接口</text>
   </g>
 
   <!-- ============ Robot ============ -->
   <g>
-    <rect x="1370" y="235" width="90" height="70" rx="12" fill="#E8E8E8" stroke="#888888"/>
-    <text x="1415" y="263" font-size="13" text-anchor="middle" fill="#222" font-weight="700">BUMI2</text>
-    <text x="1415" y="283" font-size="11" text-anchor="middle" fill="#222">本体</text>
+    <rect x="1480" y="265" width="95" height="85" rx="12" fill="#E8E8E8" stroke="#888888"/>
+    <text x="1527" y="300" font-size="14" text-anchor="middle" fill="#222" font-weight="700">BUMI2</text>
+    <text x="1527" y="322" font-size="11" text-anchor="middle" fill="#222">mjlab / 真机</text>
   </g>
 
   <!-- ============ arrows ============ -->
-  <!-- inputs -> encoders -->
-  <path d="M230,115 L296,115" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
-  <path d="M230,265 L296,265" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
-  <path d="M230,415 C 270,415 270,300 296,300" stroke="#333" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrowDashed)" fill="none"/>
+  <path d="M220,125 L256,125" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M220,285 L256,285" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M220,445 C 240,445 240,318 256,312" stroke="#666" stroke-width="2" stroke-dasharray="5,4" marker-end="url(#arrowDashed)" fill="none"/>
 
-  <!-- encoders -> token -->
-  <path d="M490,120 C 515,140 520,170 545,195" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
-  <path d="M490,300 C 515,280 520,255 545,235" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M420,125 C 435,135 440,160 448,178" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M420,285 C 435,275 440,252 448,235" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
 
-  <!-- token -> decoder -->
-  <path d="M630,215 C 665,190 670,150 696,125" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M545,185 C 556,160 556,140 566,133" stroke="#333" stroke-width="2.2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M545,225 C 556,250 556,275 566,287" stroke="#666" stroke-width="1.8" stroke-dasharray="5,4" marker-end="url(#arrowDashed)" fill="none"/>
 
-  <!-- decoder -> frame -->
-  <path d="M845,170 L845,226" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <!-- g1_kin -> 桥接 -->
+  <path d="M700,132 L736,132" stroke="#333" stroke-width="2.2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M890,185 L890,221" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <!-- 参考动作 -> 已知问题（标注） -->
+  <path d="M890,320 L890,351" stroke="#C0504D" stroke-width="1.6" stroke-dasharray="4,4" fill="none"/>
+  <!-- 参考动作 -> 回归评测 -->
+  <path d="M1040,300 L1049,300 L1049,540 L1044,540" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
 
-  <!-- frame -> ObsRef -->
-  <path d="M990,270 C 1015,270 1020,150 1046,130" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <!-- 参考动作 -> MimicLite 观测 -->
+  <path d="M1040,262 C 1062,262 1062,160 1081,155" stroke="#333" stroke-width="2.2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M1262,220 L1262,261" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M1440,308 L1476,308" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
+  <path d="M1527,263 C 1527,200 1470,125 1444,125" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
+  <text x="1492" y="200" font-size="10" fill="#666">本体状态</text>
 
-  <!-- ObsRef -> Actor -->
-  <path d="M1185,160 L1185,226" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
-
-  <!-- Actor -> Robot -->
-  <path d="M1320,270 L1366,270" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
-
-  <!-- Robot -> ObsRef feedback -->
-  <path d="M1415,233 C 1415,190 1300,110 1322,110" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
-  <text x="1420" y="195" font-size="10" fill="#666">状态反馈</text>
-
-  <!-- eval taps -->
-  <path d="M845,310 L845,416" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
-  <path d="M1200,310 C 1200,400 1000,430 984,440" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
+  <!-- root 轨迹：从源动作 PKL 绕行到桥接，不经过 SONIC -->
+  <path d="M25,125 L17,125 L17,648 L733,648 L733,285 L736,285" stroke="#2E75B6" stroke-width="2" stroke-dasharray="7,4" marker-end="url(#arrowRoot)" fill="none"/>
+  <text x="375" y="641" font-size="11.5" text-anchor="middle" fill="#2E75B6" font-weight="600">root 轨迹：取自源动作 PKL，不经解码器（g1_kin 与 SONIC token 都不含绝对位置）</text>
 
   <!-- ============ legend ============ -->
   <g font-size="12" fill="#333">
-    <rect x="30" y="530" width="18" height="18" fill="#BFE3F0" stroke="#4488AA"/>
-    <text x="54" y="544">输入（不变）</text>
-    <rect x="180" y="530" width="18" height="18" fill="#E4C6EE" stroke="#9B59B6"/>
-    <text x="204" y="544">SONIC 上层（新训练）</text>
-    <rect x="380" y="530" width="18" height="18" fill="#BFEAC5" stroke="#3FA34D"/>
-    <text x="404" y="544">桥接层（新增训练）</text>
-    <rect x="580" y="530" width="18" height="18" fill="#F7D9BF" stroke="#D2782B"/>
-    <text x="604" y="544">MimicLite-BUMI2 下层（冻结）</text>
-    <rect x="800" y="530" width="18" height="18" fill="#E8E8E8" stroke="#888888"/>
-    <text x="824" y="544">机器人本体</text>
-    <text x="950" y="544">- - - 虚线 = 反馈 / 评测核验</text>
+    <rect x="25" y="672" width="18" height="18" fill="#BFE3F0" stroke="#4488AA"/>
+    <text x="49" y="686">输入</text>
+    <rect x="105" y="672" width="18" height="18" fill="#E4C6EE" stroke="#9B59B6"/>
+    <text x="129" y="686">SONIC 上层（新训练）</text>
+    <rect x="275" y="672" width="18" height="18" fill="#BFEAC5" stroke="#3FA34D"/>
+    <text x="299" y="686">离线桥接（本地工具）</text>
+    <rect x="445" y="672" width="18" height="18" fill="#F7D9BF" stroke="#D2782B"/>
+    <text x="469" y="686">MimicLite-BUMI2（冻结）</text>
+    <rect x="645" y="672" width="18" height="18" fill="#E8E8E8" stroke="#888888"/>
+    <text x="669" y="686">机器人</text>
+    <rect x="735" y="672" width="18" height="18" fill="#FDE2E1" stroke="#C0504D"/>
+    <text x="759" y="686">已知问题</text>
+    <line x1="850" y1="681" x2="885" y2="681" stroke="#2E75B6" stroke-width="2" stroke-dasharray="7,4"/>
+    <text x="891" y="686">root 轨迹</text>
+    <text x="975" y="686">- - - 虚线 = 反馈 / 评测 / 未打通 / 不部署</text>
+    <text x="1575" y="714" font-size="10.5" fill="#888" text-anchor="end">更新于 2026-09-29 · 详见 sonic_mimiclite_new.md</text>
   </g>
 </svg>
