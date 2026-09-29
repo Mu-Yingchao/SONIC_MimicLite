@@ -85,15 +85,15 @@
     <text x="890" y="172" font-size="11" text-anchor="middle" fill="#0d3315">每 5 帧解码 · 取 0.1~0.3s 近端 · 交叉淡化</text>
 
     <rect x="740" y="225" width="300" height="95" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
-    <text x="890" y="252" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="700">参考动作 = 重建关节角 + 源动作 root</text>
+    <text x="890" y="252" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="700">参考动作 = 重建关节 + 自洽 root</text>
     <text x="890" y="275" font-size="11" text-anchor="middle" fill="#0d3315">→ qpos npz（mjlab play）</text>
     <text x="890" y="295" font-size="11" text-anchor="middle" fill="#0d3315">→ bumi_deploy_motion_v1 JSON（真机）</text>
 
-    <rect x="740" y="355" width="300" height="100" rx="12" fill="#FDE2E1" stroke="#C0504D"/>
-    <text x="890" y="381" font-size="12.5" text-anchor="middle" fill="#6b1d1b" font-weight="700">⚠ 已知问题：root 与重建关节不自洽</text>
-    <text x="890" y="403" font-size="11" text-anchor="middle" fill="#6b1d1b">窗口位移不匹配 0.030 m（GMR 原始 ≤ 0.013）</text>
-    <text x="890" y="422" font-size="11" text-anchor="middle" fill="#6b1d1b">→ play 中 ghost 与机器人越拉越远</text>
-    <text x="890" y="441" font-size="11" text-anchor="middle" fill="#6b1d1b">计划：用 mink 联合 IK 反解自洽 root（借鉴 GMR）</text>
+    <rect x="740" y="355" width="300" height="100" rx="12" fill="#BFEAC5" stroke="#3FA34D"/>
+    <text x="890" y="381" font-size="12.5" text-anchor="middle" fill="#0d3315" font-weight="700">mink 后处理：root 与重建关节自洽</text>
+    <text x="890" y="403" font-size="11" text-anchor="middle" fill="#0d3315">借鉴 GMR 联合 IK：支撑脚钉住，腿部修正 &lt; 1°</text>
+    <text x="890" y="422" font-size="11" text-anchor="middle" fill="#0d3315">参考动作脚底打滑 −52~81%，腿部更接近真值</text>
+    <text x="890" y="441" font-size="11" text-anchor="middle" fill="#0d3315">&lt; 1.1 ms/帧，可实时</text>
 
     <rect x="740" y="490" width="300" height="100" rx="12" fill="#BFEAC5" stroke="#3FA34D" stroke-dasharray="5,4"/>
     <text x="890" y="516" font-size="13" text-anchor="middle" fill="#0d3315" font-weight="700">checkpoint 回归（每 2000 步自动）</text>
@@ -115,13 +115,18 @@
     <rect x="1085" y="265" width="355" height="85" rx="12" fill="#F7D9BF" stroke="#D2782B" stroke-width="2"/>
     <text x="1262" y="292" font-size="13" text-anchor="middle" fill="#5a2a05" font-weight="700">MimicLite Actor（checkpoint_40000）</text>
     <text x="1262" y="314" font-size="11" text-anchor="middle" fill="#5a2a05">huge MLP · 输出 21 维关节目标 → PD</text>
-    <text x="1262" y="334" font-size="11" text-anchor="middle" fill="#5a2a05">SMPL 链路追踪成功率 0.839（与 robot 链路相同）</text>
+    <text x="1262" y="334" font-size="11" text-anchor="middle" fill="#5a2a05">机器人 vs 原始动作：真值 3.5° / SONIC 6.3° · 零失败</text>
 
     <rect x="1085" y="390" width="355" height="105" rx="12" fill="#FBEBDC" stroke="#D2782B" stroke-dasharray="5,4"/>
     <text x="1262" y="417" font-size="12.5" text-anchor="middle" fill="#5a2a05" font-weight="700">运行载体</text>
     <text x="1262" y="440" font-size="11" text-anchor="middle" fill="#5a2a05">仿真：本地 mjlab + viser 可视化（已验证）</text>
     <text x="1262" y="460" font-size="11" text-anchor="middle" fill="#5a2a05">真机：ROS1 AcController + ONNX（未验证）</text>
     <text x="1262" y="480" font-size="11" text-anchor="middle" fill="#5a2a05">注：只读预存参考，实时遥操需改造接口</text>
+    <rect x="1085" y="525" width="355" height="95" rx="12" fill="#FDE2E1" stroke="#C0504D"/>
+    <text x="1262" y="551" font-size="12.5" text-anchor="middle" fill="#6b1d1b" font-weight="700">⚠ play 中 ghost 与机器人的世界系漂移</text>
+    <text x="1262" y="573" font-size="11" text-anchor="middle" fill="#6b1d1b">平均 0.25 m，喂真值（不经 SONIC）也一样</text>
+    <text x="1262" y="592" font-size="11" text-anchor="middle" fill="#6b1d1b">MimicLite 观测只有相对量、不追世界坐标</text>
+    <text x="1262" y="610" font-size="11" text-anchor="middle" fill="#6b1d1b">属设计取舍，非 SONIC 所致，真机无影响</text>
   </g>
 
   <!-- ============ Robot ============ -->
@@ -146,7 +151,7 @@
   <path d="M700,132 L736,132" stroke="#333" stroke-width="2.2" marker-end="url(#arrow)" fill="none"/>
   <path d="M890,185 L890,221" stroke="#333" stroke-width="2" marker-end="url(#arrow)" fill="none"/>
   <!-- 参考动作 -> 已知问题（标注） -->
-  <path d="M890,320 L890,351" stroke="#C0504D" stroke-width="1.6" stroke-dasharray="4,4" fill="none"/>
+  <path d="M890,320 L890,351" stroke="#3FA34D" stroke-width="1.6" stroke-dasharray="4,4" fill="none"/>
   <!-- 参考动作 -> 回归评测 -->
   <path d="M1040,300 L1049,300 L1049,540 L1044,540" stroke="#666" stroke-width="1.6" stroke-dasharray="4,4" marker-end="url(#arrowDashed)" fill="none"/>
 
@@ -159,7 +164,7 @@
 
   <!-- root 轨迹：从源动作 PKL 绕行到桥接，不经过 SONIC -->
   <path d="M25,125 L17,125 L17,648 L733,648 L733,285 L736,285" stroke="#2E75B6" stroke-width="2" stroke-dasharray="7,4" marker-end="url(#arrowRoot)" fill="none"/>
-  <text x="375" y="641" font-size="11.5" text-anchor="middle" fill="#2E75B6" font-weight="600">root 轨迹：取自源动作 PKL，不经解码器（g1_kin 与 SONIC token 都不含绝对位置）</text>
+  <text x="375" y="641" font-size="11.5" text-anchor="middle" fill="#2E75B6" font-weight="600">源动作的 root / 支撑脚：作为 mink 的目标，不经解码器（两个编码器的输入都不含根平移）</text>
 
   <!-- ============ legend ============ -->
   <g font-size="12" fill="#333">
@@ -178,6 +183,6 @@
     <line x1="850" y1="681" x2="885" y2="681" stroke="#2E75B6" stroke-width="2" stroke-dasharray="7,4"/>
     <text x="891" y="686">root 轨迹</text>
     <text x="975" y="686">- - - 虚线 = 反馈 / 评测 / 未打通 / 不部署</text>
-    <text x="1575" y="714" font-size="10.5" fill="#888" text-anchor="end">更新于 2026-09-29 · 详见 sonic_mimiclite_new.md</text>
+    <text x="1575" y="714" font-size="10.5" fill="#888" text-anchor="end">更新于 2026-09-29（晚） · 详见 sonic_mimiclite_new.md</text>
   </g>
 </svg>

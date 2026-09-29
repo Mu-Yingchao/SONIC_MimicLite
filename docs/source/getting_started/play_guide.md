@@ -16,8 +16,10 @@ SONIC_MimicLite/
         ├── robot_pkl/       6 条 SONIC 格式机器人动作
         ├── smpl_pkl/        6 条配对 SMPL 动作
         └── any4hdmi-bumi-v2/motions/
-            ├── sonic_bridge/    我们 SONIC 重建的（qpos）
-            └── original_qpos/   原始真值（qpos）
+            ├── sonic_smpl_mink/ SMPL 链路 + mink 后处理（推荐）
+            ├── sonic_smpl/      SMPL 链路，root 直接拼源动作（对照）
+            ├── sonic_robot/     robot 链路
+            └── original_qpos/   原始真值，不经 SONIC（对照基准）
 ```
 
 两个 ASCII 软链接（Hydra 解析不了中文路径，必须用）：
@@ -37,7 +39,7 @@ venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/play.py \
   task=tracking-bumi-v2 task/motion=bumi/v2 +exp=ppo/train \
   algo/ppo/module=huge backend=mjlab headless=false task.num_envs=2 \
   task.termination.root_pos_error.enabled=false \
-  task.command.motion_cfgs.bumi_v2.path=~/sonic_deploy/motions/any4hdmi-bumi-v2/motions/sonic_bridge \
+  task.command.motion_cfgs.bumi_v2.path=~/sonic_deploy/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink \
   checkpoint_path=~/sonic_deploy/policies/mimiclite/checkpoint_40000.pt
 ```
 
@@ -64,8 +66,19 @@ venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/play.py \
 
 | 看什么 | path 指向 |
 |---|---|
-| 我们 SONIC 重建的动作 | `.../motions/sonic_bridge` |
-| 原始真值（A/B 对照） | `.../motions/original_qpos` |
+| SMPL → SONIC → mink（项目目标链路，推荐） | `.../motions/sonic_smpl_mink` |
+| SMPL → SONIC，root 直接拼源动作 | `.../motions/sonic_smpl` |
+| Robot → SONIC | `.../motions/sonic_robot` |
+| 原始真值，不经 SONIC（对照基准） | `.../motions/original_qpos` |
+
+每个目录 21 条动作，覆盖静态/行走/跑跳/表演/高动态。
+
+### 看 play 时注意：ghost 会"漂"，这是正常的
+
+viser 里的半透明 ghost 按参考动作的**世界坐标**画，机器人的世界位置由物理仿真决定。MimicLite
+的观测只有相对量、不追世界坐标，所以两者会逐渐拉开——**喂原始真值也一样**（实测平均 0.25 m）。
+判断追踪好坏看姿态是否一致（终端的 `body_pos_error` / `body_ori_error` 终止统计），不看 ghost
+离机器人多远。ghost 自身脚底打滑才是参考动作的问题，mink 后处理就是修这个的。
 
 目录里所有 `.npz` 都会被自动扫到，加新动作直接放进去即可。
 
@@ -87,7 +100,7 @@ unset VIRTUAL_ENV
   task=tracking-bumi-v2 task/motion=bumi/v2 +exp=ppo/train \
   algo/ppo/module=huge backend=mjlab headless=true task.num_envs=1 \
   task.termination.root_pos_error.enabled=false \
-  task.command.motion_cfgs.bumi_v2.path=/home/yingchaomu/sonic_deploy/motions/any4hdmi-bumi-v2/motions/sonic_bridge \
+  task.command.motion_cfgs.bumi_v2.path=/home/yingchaomu/sonic_deploy/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink \
   checkpoint_path=/home/yingchaomu/sonic_deploy/policies/mimiclite/checkpoint_40000.pt \
   render_seconds=9
 ```
@@ -117,16 +130,24 @@ unset VIRTUAL_ENV
 
 ## 加新动作
 
+任意 SONIC 训练用的 robot/smpl PKL 都能直接走全链路，纯本地、不需要服务器：
+
 ```bash
-# Noetix-9 上 export_bridge_motion 导出 JSON，拉回本地后：
 cd ~/下载/SONIC_MimicLite
-python3 tools_local/bridge_json_to_any4hdmi_qpos.py \
-  <桥接导出.json> \
-  test_data/motions/any4hdmi-bumi-v2/motions/sonic_bridge/<名字>_from_g1_bumi_v2.npz \
-  --manifest test_data/motions/any4hdmi-bumi-v2/manifest.json
+unset VIRTUAL_ENV
+M=test_data/motions/any4hdmi-bumi-v2
+mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/sonic_offline_bridge.py \
+  --motion   test_data/motions/smpl_pkl/<名字>.pkl \
+  --root-motion test_data/motions/robot_pkl/<名字>.pkl \
+  --encoder smpl --onnx test_data/policies/sonic/model_step_017600_smpl.onnx \
+  --manifest $M/manifest.json \
+  --out $M/motions/sonic_smpl_mink/<名字>_from_g1_bumi_v2.npz
 ```
 
-原始 any4hdmi npz 转真值对照加 `--from-raw`。
+- robot 链路：`--motion` 指 robot PKL、`--encoder robot`、`--onnx ..._g1.onnx`，不需要 `--root-motion`
+- 默认带 mink 后处理（`--root-solve legs`）；`--root-solve none` 得到 root 直接拼源动作的对照版
+- 真值对照：`tools_local/bridge_json_to_any4hdmi_qpos.py <原始npz> <输出> --manifest ... --from-raw`
+- 放进目录就会被 play 自动扫到，命令不用改
 
 ## 环境重建
 
@@ -147,6 +168,8 @@ uv sync
 # 必须显式 --python，否则会装进 VIRTUAL_ENV 指向的其它环境且报告成功。
 unset VIRTUAL_ENV
 uv pip install --python .venv/bin/python warp-lang mjlab
+# 桥接的 mink 后处理（root 自洽）需要 mink 与 QP 求解器
+uv pip install --python .venv/bin/python mink "qpsolvers[daqp]"
 
 # 项目注册表（.cache/projects.json）不在 Git 里，需现场生成。
 # discover --enabled 会连带启用三个依赖 IsaacLab 的项目，必须关掉。

@@ -356,6 +356,9 @@ def main() -> None:
                     help="SMPL 链路需要配对的机器人 PKL 提供 root 轨迹；robot 链路默认用 --motion 自身")
     ap.add_argument("--stitch", choices=["near", "window"], default="near",
                     help="窗口拼接方式，见 reconstruct_qpos 说明；window 为旧做法，仅供对照")
+    ap.add_argument("--root-solve", choices=["legs", "none"], default="legs",
+                    help="后处理：用 mink 让 root 与重建关节自洽（见 tools_local/mink_root_solve.py）。"
+                         "legs 为默认；none 保留拼接的源动作 root，仅供对照")
     args = ap.parse_args()
 
     session = open_session(args.onnx, args.encoder)
@@ -368,6 +371,25 @@ def main() -> None:
     )
     total_frames = qpos.shape[0]
     window_span = (NUM_FUTURE_FRAMES - 1) * FUTURE_FRAME_STRIDE + 1
+
+    if args.root_solve == "legs":
+        # 后处理：mink 反解与重建关节自洽的 root（腿部允许 <1° 的修正）。目标取自源动作的
+        # 支撑脚与 root，即 root_src（robot 链路就是输入本身，SMPL 链路是 --root-motion）。
+        # 实测参考动作脚底打滑 -52~81%、腿部关节反而更接近真值；但它不减少 play 中
+        # ghost 与机器人的世界系距离——那是 MimicLite 不追世界坐标所致，喂真值也一样。
+        from mink_root_solve import solve_root
+
+        src_quat = np.asarray(root_src["root_rot"], dtype=np.float32)[:, [3, 0, 1, 2]].copy()
+        for i in range(1, len(src_quat)):
+            if float(np.dot(src_quat[i], src_quat[i - 1])) < 0.0:
+                src_quat[i] = -src_quat[i]
+        source_qpos = np.concatenate([
+            np.asarray(root_src["root_trans_offset"], dtype=np.float32), src_quat,
+            np.asarray(root_src["dof"], dtype=np.float32)], axis=1)
+        man = json.loads(args.manifest.read_text(encoding="utf-8"))
+        mjcf = args.manifest.parent / man["mjcf"]  # 数据集自带的 FK 骨架，与 any4hdmi 一致
+        qpos, st = solve_root(qpos, source_qpos, str(mjcf), mode="legs")
+        print(f"root 自洽后处理: 腿部平均修正 {st['leg_change_deg']:.2f}°，root 平均偏移 {st['root_shift_m']:.3f} m")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(args.out, qpos=qpos)
