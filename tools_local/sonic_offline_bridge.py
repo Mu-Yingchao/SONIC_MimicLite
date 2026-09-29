@@ -194,41 +194,64 @@ def split_pos_vel(decoded: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return flat[:half].reshape(-1, NUM_DOF), flat[half : half * 2].reshape(-1, NUM_DOF)
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--motion", type=Path, required=True, help="SONIC 训练用的动作 PKL")
-    ap.add_argument("--onnx", type=Path, required=True, help="导出的联合 ONNX（*_g1 或 *_smpl）")
-    ap.add_argument("--encoder", choices=["robot", "smpl"], required=True)
-    ap.add_argument("--out", type=Path, required=True, help="输出的 qpos npz")
-    ap.add_argument("--manifest", type=Path, required=True, help="any4hdmi manifest.json，用于关节重排")
-    ap.add_argument("--root-motion", type=Path, default=None,
-                    help="SMPL 链路需要配对的机器人 PKL 提供 root 轨迹；robot 链路默认用 --motion 自身")
-    args = ap.parse_args()
+def load_joint_maps(manifest_path: Path) -> tuple[list[int], list[int]]:
+    """从 manifest 现读关节重排映射（不硬编码）。
 
-    session = ort.InferenceSession(str(args.onnx), providers=["CPUExecutionProvider"])
-    in_name = session.get_inputs()[0].name
-    in_dim = session.get_inputs()[0].shape[1]
-    tok_dim = SMPL_TOKENIZER_DIM if args.encoder == "smpl" else ROBOT_TOKENIZER_DIM
-    if in_dim != tok_dim + PROPRIOCEPTION_DIM:
-        raise ValueError(
-            f"ONNX 输入 {in_dim} 与 encoder={args.encoder} 期望的 "
-            f"{tok_dim}+{PROPRIOCEPTION_DIM} 不符，模型和 --encoder 选错了"
-        )
-
-    # 关节重排映射从 manifest 现读（不硬编码）：
-    #   perm            IsaacLab -> MuJoCo（解码输出 -> qpos）
-    #   mujoco_to_isaac MuJoCo -> IsaacLab（PKL 的 dof -> encoder 输入）
-    man = json.loads(args.manifest.read_text(encoding="utf-8"))
+    返回 (perm, mujoco_to_isaac)：
+      perm            IsaacLab -> MuJoCo（解码输出 -> qpos）
+      mujoco_to_isaac MuJoCo -> IsaacLab（PKL 的 dof -> encoder 输入）
+    """
+    man = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     src_names = man["source"]["source_joint_names"]       # IsaacLab
     tgt_names = man["source"]["target_hinge_joint_names"]  # MuJoCo
-    perm = [src_names.index(n) for n in tgt_names]
-    mujoco_to_isaac = [tgt_names.index(n) for n in src_names]
+    return [src_names.index(n) for n in tgt_names], [tgt_names.index(n) for n in src_names]
 
-    motion = load_robot_motion(args.motion)
-    smpl_local, smpl_root = prepare_smpl_reference(motion) if args.encoder == "smpl" else (None, None)
+
+def open_session(onnx_path: Path, encoder: str) -> ort.InferenceSession:
+    """打开 ONNX 并校验输入维度与 encoder 匹配。"""
+    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    in_dim = session.get_inputs()[0].shape[1]
+    tok_dim = SMPL_TOKENIZER_DIM if encoder == "smpl" else ROBOT_TOKENIZER_DIM
+    if in_dim != tok_dim + PROPRIOCEPTION_DIM:
+        raise ValueError(
+            f"ONNX 输入 {in_dim} 与 encoder={encoder} 期望的 "
+            f"{tok_dim}+{PROPRIOCEPTION_DIM} 不符，模型和 --encoder 选错了"
+        )
+    return session
+
+
+def reconstruct_qpos(
+    session: ort.InferenceSession,
+    motion: dict,
+    encoder: str,
+    perm: list[int],
+    mujoco_to_isaac: list[int],
+    root_src: dict,
+    stitch: str = "near",
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """动作 -> ONNX 编解码 -> qpos。
+
+    返回 (qpos[T,28], 重建关节角 MuJoCo 顺序 [T,21], 四元数半球修正帧数)。
+    命令行入口和 checkpoint 回归脚本共用这一个函数，保证两边算的是同一个东西。
+
+    stitch 决定怎么把每次解码的 1 秒窗口拼成整条动作（默认 near）：
+      window  每 46 帧解码一次、用满整个窗口（0~0.9s 的预测全用上）——旧做法
+      near    每 5 帧解码一次、只用窗口里 0.1~0.3s 的那段，相邻窗口交叉淡化
+    实测解码误差随窗口内偏移呈 U 形（21 条动作，step 17600，robot 链路）：
+    偏移 0 帧 6.37°、5~10 帧 5.56~5.64°、45 帧 8.30°。window 模式把远端那段
+    误差大的预测也平均进来了；near 只取最准的一段，也更接近在线部署时"每个控制步
+    重新解码、只用近端预测"的真实用法。
+
+    实测 21 条动作（step 17600）window -> near：smpl 平均 7.52° -> 5.50°（-27%），
+    p95 25.5° -> 17.9°，root 位移不匹配 0.0423 -> 0.0305 m（-28%），
+    关节加速度（抖动）2.61x -> 2.82x 真值，基本持平。
+    """
+    if stitch not in ("window", "near"):
+        raise ValueError(f"未知拼接方式 {stitch!r}")
+    in_name = session.get_inputs()[0].name
+    smpl_local, smpl_root = prepare_smpl_reference(motion) if encoder == "smpl" else (None, None)
 
     # root 轨迹不过 decoder，直接取真值（g1_kin 只重建关节，这是刻意设计）
-    root_src = load_robot_motion(args.root_motion) if args.root_motion else motion
     if "root_trans_offset" not in root_src:
         raise ValueError("root 轨迹来源缺少 root_trans_offset，SMPL 链路需要 --root-motion 指向配对的机器人 PKL")
     root_pos = np.asarray(root_src["root_trans_offset"], dtype=np.float32)
@@ -245,27 +268,66 @@ def main() -> None:
     filled = np.zeros(total_frames, dtype=bool)
 
     proprio = np.zeros(PROPRIOCEPTION_DIM, dtype=np.float32)  # 实测对输出零影响
-    for start in range(0, total_frames, window_span):
-        if args.encoder == "smpl":
+
+    def decode(start: int) -> tuple[np.ndarray, np.ndarray]:
+        if encoder == "smpl":
             tok = build_smpl_tokenizer(smpl_local, smpl_root, start, NUM_FUTURE_FRAMES)
         else:
             tok = build_robot_tokenizer(motion, start, NUM_FUTURE_FRAMES, mujoco_to_isaac)
         obs = np.concatenate([tok, proprio]).astype(np.float32)[None]
         decoded = session.run(None, {in_name: obs})[0].reshape(NUM_FUTURE_FRAMES, 48)
-        pos_sparse, vel_sparse = split_pos_vel(decoded)
+        return split_pos_vel(decoded)
 
-        # 10 个稀疏采样点插值成连续帧
-        pos_dense = np.stack(
-            [np.interp(dense_offsets, sparse_offsets, pos_sparse[:, j]) for j in range(NUM_DOF)], axis=1
-        )
-        vel_dense = np.stack(
-            [np.interp(dense_offsets, sparse_offsets, vel_sparse[:, j]) for j in range(NUM_DOF)], axis=1
-        )
-        end = min(start + window_span, total_frames)
-        n = end - start
-        joint_pos_full[start:end] = pos_dense[:n]
-        joint_vel_full[start:end] = vel_dense[:n]
-        filled[start:end] = True
+    if stitch == "window":
+        for start in range(0, total_frames, window_span):
+            pos_sparse, vel_sparse = decode(start)
+            # 10 个稀疏采样点插值成连续帧
+            pos_dense = np.stack(
+                [np.interp(dense_offsets, sparse_offsets, pos_sparse[:, j]) for j in range(NUM_DOF)], axis=1
+            )
+            vel_dense = np.stack(
+                [np.interp(dense_offsets, sparse_offsets, vel_sparse[:, j]) for j in range(NUM_DOF)], axis=1
+            )
+            end = min(start + window_span, total_frames)
+            n = end - start
+            joint_pos_full[start:end] = pos_dense[:n]
+            joint_vel_full[start:end] = vel_dense[:n]
+            filled[start:end] = True
+    else:
+        # 每 STRIDE(5) 帧起一个窗口。帧 t 同时落在两个窗口的"准区"里：
+        #   新窗口 s   = t 往前对齐到的起点，偏移 t-s ∈ [5,10)
+        #   旧窗口 s-5，偏移 ∈ [10,15)
+        # 按 u=(t-s-5)/5 从旧窗口线性过渡到新窗口。t 走到 s+10 时混合值恰等于
+        # "窗口 s 在偏移 10 处的预测"，而下一段开头取的也正是它——切换点连续。
+        # 不做交叉淡化、每 5 帧硬切窗口的话，误差同样降，但切换点有台阶，实测关节
+        # 加速度涨到真值的 ~8 倍，等于给 MimicLite 的参考注入 10Hz 抖动。
+        cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+
+        def at(s: int, offset: float) -> tuple[np.ndarray, np.ndarray]:
+            if s not in cache:
+                cache[s] = decode(s)
+            pos_sparse, vel_sparse = cache[s]
+            k0 = int(offset // FUTURE_FRAME_STRIDE)
+            a = (offset - k0 * FUTURE_FRAME_STRIDE) / FUTURE_FRAME_STRIDE
+            return (
+                (1 - a) * pos_sparse[k0] + a * pos_sparse[k0 + 1],
+                (1 - a) * vel_sparse[k0] + a * vel_sparse[k0 + 1],
+            )
+
+        for t in range(total_frames):
+            if t < 2 * FUTURE_FRAME_STRIDE:
+                # 开头不足两个窗口可混合，直接用窗口 0
+                pos, vel = at(0, float(t))
+            else:
+                s = FUTURE_FRAME_STRIDE * ((t - FUTURE_FRAME_STRIDE) // FUTURE_FRAME_STRIDE)
+                u = (t - s - FUTURE_FRAME_STRIDE) / FUTURE_FRAME_STRIDE
+                new_pos, new_vel = at(s, float(t - s))
+                old_pos, old_vel = at(s - FUTURE_FRAME_STRIDE, float(t - s + FUTURE_FRAME_STRIDE))
+                pos = (1 - u) * old_pos + u * new_pos
+                vel = (1 - u) * old_vel + u * new_vel
+            joint_pos_full[t] = pos
+            joint_vel_full[t] = vel
+            filled[t] = True
 
     if not filled.all():
         raise RuntimeError(f"有 {int((~filled).sum())} 帧没被任何窗口覆盖")
@@ -278,7 +340,34 @@ def main() -> None:
             root_quat_wxyz[i] = -root_quat_wxyz[i]
             flips += 1
 
-    qpos = np.concatenate([root_pos, root_quat_wxyz, joint_pos_full[:, perm]], axis=1).astype(np.float32)
+    joint_pos_mujoco = joint_pos_full[:, perm]
+    qpos = np.concatenate([root_pos, root_quat_wxyz, joint_pos_mujoco], axis=1).astype(np.float32)
+    return qpos, joint_pos_mujoco, flips
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--motion", type=Path, required=True, help="SONIC 训练用的动作 PKL")
+    ap.add_argument("--onnx", type=Path, required=True, help="导出的联合 ONNX（*_g1 或 *_smpl）")
+    ap.add_argument("--encoder", choices=["robot", "smpl"], required=True)
+    ap.add_argument("--out", type=Path, required=True, help="输出的 qpos npz")
+    ap.add_argument("--manifest", type=Path, required=True, help="any4hdmi manifest.json，用于关节重排")
+    ap.add_argument("--root-motion", type=Path, default=None,
+                    help="SMPL 链路需要配对的机器人 PKL 提供 root 轨迹；robot 链路默认用 --motion 自身")
+    ap.add_argument("--stitch", choices=["near", "window"], default="near",
+                    help="窗口拼接方式，见 reconstruct_qpos 说明；window 为旧做法，仅供对照")
+    args = ap.parse_args()
+
+    session = open_session(args.onnx, args.encoder)
+    perm, mujoco_to_isaac = load_joint_maps(args.manifest)
+    motion = load_robot_motion(args.motion)
+    root_src = load_robot_motion(args.root_motion) if args.root_motion else motion
+
+    qpos, joint_pos_mujoco, flips = reconstruct_qpos(
+        session, motion, args.encoder, perm, mujoco_to_isaac, root_src, stitch=args.stitch
+    )
+    total_frames = qpos.shape[0]
+    window_span = (NUM_FUTURE_FRAMES - 1) * FUTURE_FRAME_STRIDE + 1
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     np.savez(args.out, qpos=qpos)
@@ -289,11 +378,10 @@ def main() -> None:
     print(f"四元数半球修正: {flips} 帧")
     print(f"输出          : {args.out}  shape={qpos.shape}")
 
-    # 自检：和数据自带的真值关节角比一比，给出重建误差
+    # 自检：和数据自带的真值关节角比一比，给出重建误差（两边都是 MuJoCo 顺序）
     if "dof" in motion:
         gt = np.asarray(motion["dof"], dtype=np.float32)[:total_frames]
-        # gt 是 MuJoCo 顺序，joint_pos_full[:, perm] 也转成了 MuJoCo 顺序
-        err = np.rad2deg(np.abs(gt - joint_pos_full[:, perm]))
+        err = np.rad2deg(np.abs(gt - joint_pos_mujoco))
         print(f"关节重建误差  : 平均 {err.mean():.3f}°  p95 {np.percentile(err,95):.3f}°  最大 {err.max():.3f}°")
 
 
