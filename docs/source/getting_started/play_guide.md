@@ -73,6 +73,9 @@ bash tools_local/build_play_set.sh $S/recon_v1_step_008000_g1.onnx $S/recon_v1_s
 cat test_data/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink/SOURCE.txt   # 查当前用的哪个 checkpoint
 ```
 
+**重新生成后必须重启 play**：play 只在启动时加载数据，老进程会继续用旧数据（或新旧混用），
+表现为动作只播前十几帧就反复重置。`pgrep -af scripts/play.py` 确认没有遗留的老进程。
+
 训练中的新 checkpoint 由回归循环自动拉到
 `test_data/policies/sonic/regression/<run>/model_step_XXXXXX_{g1,smpl}.onnx`，
 选哪个看 `test_data/regression/<run>/summary.csv` 里 smpl 行的 `mean_deg`（越小越好）。
@@ -225,4 +228,5 @@ editable finder 都存着绝对路径，要整体替换旧路径才能用。
 | `No module named 'warp'` | 装错 venv，用 `--python` 重装 |
 | `错误的解释器` | venv 被移动过，修 `.venv/bin/` 里的 shebang |
 | `KeyError: qpos` | 往 motions/ 放了原始格式 npz，需先转换 |
+| 动作只播前几十帧就反复重置 | 老 play 进程在用旧数据，Ctrl+C 后按新命令重启 |
 | mp4 只有 48 字节 | 没录完，等 `pgrep -f scripts/play.py` 无输出 |
