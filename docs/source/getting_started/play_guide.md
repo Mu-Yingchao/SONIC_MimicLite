@@ -11,10 +11,12 @@ SONIC_MimicLite/
 │   ├── training/            同事训练框架，play.py 在这里
 │   └── deploy/              同事 ROS1 真机代码（尚未使用）
 └── test_data/
-    ├── policies/mimiclite/  checkpoint_40000.pt
+    ├── policies/
+    │   ├── mimiclite/       checkpoint_40000.pt（底层，固定）
+    │   └── sonic/           recon_v1_step_008000_{g1,smpl}.onnx（上层，当前最好）
     └── motions/
-        ├── robot_pkl/       6 条 SONIC 格式机器人动作
-        ├── smpl_pkl/        6 条配对 SMPL 动作
+        ├── robot_pkl/       21 条 SONIC 格式机器人动作
+        ├── smpl_pkl/        21 条配对 SMPL 动作
         └── any4hdmi-bumi-v2/motions/
             ├── sonic_smpl_mink/ SMPL 链路 + mink 后处理（推荐）
             ├── sonic_smpl/      SMPL 链路，root 直接拼源动作（对照）
@@ -37,13 +39,13 @@ unset VIRTUAL_ENV
 
 venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/play.py \
   task=tracking-bumi-v2 task/motion=bumi/v2 +exp=ppo/train \
-  algo/ppo/module=huge backend=mjlab headless=false task.num_envs=2 \
+  algo/ppo/module=huge backend=mjlab headless=false task.num_envs=4 \
   task.termination.root_pos_error.enabled=false \
-  task.command.motion_cfgs.bumi_v2.path=~/sonic_deploy/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink \
-  checkpoint_path=~/sonic_deploy/policies/mimiclite/checkpoint_40000.pt
+  task.command.motion_cfgs.bumi_v2.path=/home/yingchaomu/sonic_deploy/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink \
+  checkpoint_path=/home/yingchaomu/sonic_deploy/policies/mimiclite/checkpoint_40000.pt
 ```
 
-`~` 在 Hydra 参数里不展开，实际使用时写全 `/home/yingchaomu/sonic_deploy/...`。
+Hydra 参数里的 `~` 不展开，路径必须写全（上面已写全，可直接复制）。
 
 ### 看画面
 
@@ -60,9 +62,36 @@ venv/mjlab/.venv/bin/python projects/mimic-lite/scripts/play.py \
 首次启动编译 CUDA kernel 要 **40～60 秒**才出画面，不是卡死。
 正常后终端持续刷 `Loop FPS: 50 frames in 1.00s`。
 
-## 切换数据
+## 换上层 SONIC checkpoint
 
-改 `task.command.motion_cfgs.bumi_v2.path` 一个参数，其余不动：
+play 读的是预先生成好的 npz，换 SONIC 就是重新生成（约 1 分钟，三个链路目录一起换）：
+
+```bash
+cd ~/下载/SONIC_MimicLite
+S=test_data/policies/sonic
+bash tools_local/build_play_set.sh $S/recon_v1_step_008000_g1.onnx $S/recon_v1_step_008000_smpl.onnx
+cat test_data/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink/SOURCE.txt   # 查当前用的哪个 checkpoint
+```
+
+训练中的新 checkpoint 由回归循环自动拉到
+`test_data/policies/sonic/regression/<run>/model_step_XXXXXX_{g1,smpl}.onnx`，
+选哪个看 `test_data/regression/<run>/summary.csv` 里 smpl 行的 `mean_deg`（越小越好）。
+
+## 切换动作
+
+**不用重启，在浏览器里切。** 右侧面板 `Mimic` 文件夹：
+
+1. `Clip Search` 输入关键字过滤（如 `jump`、`walk`、`dancing`）
+2. `Clip` 下拉框选一条
+3. `Clip Actions` 点 **Apply**：所有机器人立即重置并都跑这一条，跑完循环重跑
+4. **Random** 随机钉一条；**Unpin** 恢复每个机器人随机抽动作
+
+画面里机器人个数 = `task.num_envs`，不是动作数。不钉的时候每个机器人从目录里 21 条中随机抽，
+跑完再抽。只想看一个机器人：`task.num_envs=1`。
+
+## 切换链路
+
+改 `task.command.motion_cfgs.bumi_v2.path` 一个参数，其余不动（换链路要重启 play）：
 
 | 看什么 | path 指向 |
 |---|---|
@@ -128,8 +157,8 @@ unset VIRTUAL_ENV
 `('stats','success')` **不是**合格线，真实训练数据也常是 `0.0`。
 `tracking_metrics` 是累积误差，只用来横向比较，没有固定及格分。
 
-已验证基线（我们的重建动作，434 帧）：
-`body_pos 9.46 / body_ori 43.11 / joint_pos 20.45`
+已验证（2026-09-30，SONIC recon_v1 step 8000 + mink，`sonic_smpl_mink` 21 条，8 个机器人跑 8 轮）：
+每轮 `motion_timeout=1.0`，三个 `*_error` 全 `0.0`，无一失败。
 
 ## 加新动作
 
@@ -142,7 +171,7 @@ M=test_data/motions/any4hdmi-bumi-v2
 mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/sonic_offline_bridge.py \
   --motion   test_data/motions/smpl_pkl/<名字>.pkl \
   --root-motion test_data/motions/robot_pkl/<名字>.pkl \
-  --encoder smpl --onnx test_data/policies/sonic/model_step_017600_smpl.onnx \
+  --encoder smpl --onnx test_data/policies/sonic/recon_v1_step_008000_smpl.onnx \
   --manifest $M/manifest.json \
   --out $M/motions/sonic_smpl_mink/<名字>_from_g1_bumi_v2.npz
 ```

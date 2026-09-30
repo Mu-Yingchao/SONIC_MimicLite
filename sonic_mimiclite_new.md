@@ -22,7 +22,7 @@
 | checkpoint 回归 | ✅ 每 2000 步自动评估 21 条测试动作，回退/停滞自动告警 |
 | 参考动作脚底打滑 | ✅ mink 后处理（root 与重建关节自洽），打滑 -52~81% |
 | play 中 ghost 与机器人的世界系漂移 | ℹ 约 0.25 m，**喂真值也一样**——MimicLite 不追世界坐标，非 SONIC 所致 |
-| 实时 PICO 遥操 | ✗ 未打通，障碍在 MimicLite 侧接口（§7） |
+| 实时 PICO 遥操 | ✗ 未打通；方案见 §7.1（前瞻延迟、root 来源、MimicLite 流式接口） |
 | 真机 | ✗ 未验证 |
 
 ---
@@ -213,7 +213,7 @@ robot 持平；学习率由 PPO 的 KL 自适应、已压到下限附近，Adam 
 | 训练集 SMPL（配对） | Noetix-9 `/data0/bumi2_sonic_dataset_v1/built/smpl_all` | 93,822 条 PKL |
 | any4hdmi 原始 npz | Noetix-9 `/data0/bumi_v2_filtered` | 51 GB |
 | **本地测试集** | `test_data/motions/{robot_pkl,smpl_pkl}` | 21 条配对，覆盖静态/行走/跑跳/表演/高动态 |
-| 本地 play 参考 | `test_data/motions/any4hdmi-bumi-v2/motions/{sonic_robot,sonic_smpl}` | 各 21 条 qpos |
+| 本地 play 参考 | `test_data/motions/any4hdmi-bumi-v2/motions/{sonic_smpl_mink,sonic_smpl,sonic_robot,original_qpos}` | 各 21 条 qpos；SONIC 三组由 `tools_local/build_play_set.sh` 一键重建，来源 checkpoint 见各目录 `SOURCE.txt` |
 
 SMPL 直接复用已对齐筛选的 BUMI3 SMPL 语料（可跨机型复用），BUMI2 Robot npz 用
 `gear_sonic/tools/prepare_bumi2_sonic_dataset.py` 转换并按文件名配对。
@@ -262,6 +262,36 @@ SMPL 直接复用已对齐筛选的 BUMI3 SMPL 语料（可跨机型复用），
 | 最终动作偏离原始动作 | SONIC 重建误差（6.3° vs 真值 3.5°，§6） | 第二轮训练（§3.3），高动态约为静态 2 倍 |
 | mink 目标依赖配对 robot 动作 | 当前用源 robot 动作的支撑脚作目标 | 纯 SMPL 输入时换成缩放后的 SMPL 关键点（GMR 原做法） |
 | 真机 | 未编译、未运行 ROS1 部署包 | 仿真指标达标后再做 |
+
+### 7.1 实时遥操怎么打通（方案，未实施）
+
+当前 play 是离线的：整段 PKL 先过 SONIC 生成 npz，再交给 MimicLite。实时遥操要把每一环改成流式。
+
+**能实现。已有的现成部件**：
+
+- PICO → SMPL 帧 → ZMQ 发送：官方 `gear_sonic/scripts/pico_manager_thread_server.py`（协议 v2 = `smpl_joints`+`smpl_pose`）。
+- 滑动窗口接收：官方 `gear_sonic_deploy/.../streamed_motion_merger.hpp`；超出已收到数据的"未来帧"
+  钳到最新一帧（hold），播放游标刻意落后于接收端。
+- SONIC ONNX（编码器 + `g1_kin`）单次前向为毫秒级；mink 本身逐帧热启动，天然可在线。
+
+**要解决的三个问题**：
+
+| 问题 | 现状 | 做法 |
+|---|---|---|
+| **前瞻**：编码器要 10 帧 × 0.1 s = 0.9 s 的未来；MimicLite 还要 +4 步（80 ms） | 离线时未来是已知的 | 同官方：未来钳到最新帧 + 固定播放延迟 D。D 越大越准、越迟钝，需实测取舍 |
+| **root 来源**：mink 目标目前取配对 robot PKL | 遥操只有 SMPL | 用 SMPL 骨盆平移按身高比缩放作 root 目标（GMR 做法），脚接触改为因果判定 |
+| **MimicLite 输入接口**：mjlab 数据集启动时一次性加载；真机 `AcController.cpp` 只读 JSON 文件 | 不接受流 | 仿真：写一个从环形缓冲读参考的 motion command；真机：`AcController` 加 ROS topic 参考输入 |
+
+**分三步**：
+
+1. **离线模拟在线（纯本地、无硬件）**：桥接加因果模式（每一时刻只用 ≤ t+D 的输入），在 21 条测试集上
+   扫 D = 0 / 0.1 / 0.2 / 0.5 s，用回归管线量化精度损失。决定遥操可行的延迟区间，也决定是否需要
+   用"未来钳位"的数据增强重训 SONIC。
+2. **仿真端到端流式**：SMPL PKL 按 50 Hz 实时回放发 ZMQ → 在线桥接进程 → mjlab 流式 motion command
+   → MimicLite。这是真正的端到端，换 PICO 只换发送端。
+3. **接 PICO → 真机**：发送端换官方 PICO 服务；真机侧改 `AcController` 接流式参考。
+
+备选：直接部署 `g1_dyn`（官方 SONIC 原生实时路径，已同训），作为对照和兜底。
 
 ---
 
