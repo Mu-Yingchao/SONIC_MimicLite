@@ -80,6 +80,9 @@ viser 里的半透明 ghost 按参考动作的**世界坐标**画，机器人的
 判断追踪好坏看姿态是否一致（终端的 `body_pos_error` / `body_ori_error` 终止统计），不看 ghost
 离机器人多远。ghost 自身脚底打滑才是参考动作的问题，mink 后处理就是修这个的。
 
+官方也是这么定性的：`root_pos_error`（世界系 root 偏离 >0.4 m）配置为 `is_timeout: true`（截断而非失败），
+`scripts/eval.py` 把它和 `motion_timeout` 一起算作 success，官方 README 的 play 命令同样关掉它。
+
 目录里所有 `.npz` 都会被自动扫到，加新动作直接放进去即可。
 
 ## 换策略
