@@ -133,6 +133,7 @@ bash tools_local/sonic_regression_loop.sh --loop 1800 --run sonic_bumi2_recon_v1
 | `sonic_mimiclite_new.md` | **定案方案**：架构、root 问题的结论、两轮训练记录、对照实验数据、已知限制、遥操方案、下一步。最重要的一篇 |
 | `media/sonic_mimiclite_bridge.png` | 架构图，对应上面文档 §9 |
 | `docs/source/getting_started/play_guide.md` | 本地 play 操作手册：命令、切换动作和链路、判读指标、环境重建、故障排查 |
+| `docs/source/getting_started/bumi2_sonic_dataset.md` | 上层训练集的来源、对齐与配对规则、构建和验证命令、与 MimicLite 训练集的差异 |
 | `docs/source/getting_started/codex_local_control_multi_node_training.md` | 本地控制服务器的工作规范：同步流程、训练监控、checkpoint 管理 |
 | `SONIC_MimicLite_修改记录.md` | 全部修改的流水账，含验证证据和**被推翻的错误结论**。查"某处为什么这样改"时按日期搜 |
 
