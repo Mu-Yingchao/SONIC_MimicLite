@@ -152,10 +152,25 @@ mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/smpl_stream.py 
 
 ### 接真 PICO
 
-**PICO 端准备**（沿用 BUMI3 已跑通的流程）：
-1. PC 端启动 XRoboToolkit 服务：桌面图标 "roboticsservice"，或 `/opt/apps/roboticsservice/run3D.sh`。
-2. PICO、两个手柄、两个脚踝 tracker 完成校准。
-3. PICO 与 PC 在同一网络，PICO 上的 XRoboToolkit 应用连上 PC 服务。
+**每次遥操前的设备准备**（软件都已装好，首次安装和 tracker 配对见
+[vr_teleop_setup.md](vr_teleop_setup.md)）：
+
+1. **启动 PC 服务**：点桌面图标 "roboticsservice"，或运行 `/opt/apps/roboticsservice/run3D.sh`。
+   窗口保持开着。
+2. **查 PC 的 IP**：`hostname -I`，取和 PICO 同一 Wi-Fi 的那个地址。
+3. **戴 tracker**：两个动作 tracker 绑在左右脚踝，指示灯一面朝上，裤腿收好别挡住；
+   两个手柄开机。
+4. **校准**：戴上 PICO，在动作 tracker 界面点蓝色 "Calibrate"，按提示做两步。
+   - 手柄垂在身体两侧、站直不动；
+   - 低头看脚，直到头显摄像头认出两个 tracker。
+
+   校准完把头显推到额头上，**面朝前**，它要持续看到脚上的 tracker。
+5. **连 PC**：PICO 与 PC 连同一 Wi-Fi，打开 PICO 上的 XRoboToolkit 应用。
+   - "PC Service" 点 Enter 输入第 2 步的 IP，Status 显示 **WORKING** 即连上；已填过 IP 就点 "Reconnect"。
+   - Tracking 勾选 **Head**、**Controller**。
+   - Data/Control 选 **Send**。
+   - Pico Motion Tracker 选 **Full body**。
+6. **站到空地上、面朝前方站好**，再启动下面两个终端。
 
 然后开两个终端：
 
