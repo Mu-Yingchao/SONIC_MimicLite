@@ -70,21 +70,11 @@ def _body_poses(model, data, qpos: np.ndarray, bodies: list[int]) -> np.ndarray:
     return out
 
 
-def solve_root(
-    qpos_recon: np.ndarray,
-    qpos_source: np.ndarray,
-    mjcf: str,
-    mode: str = "root",
-    stance_pos_cost: float = 20.0,
-    stance_ori_cost: float = 2.0,
-    swing_pos_cost: float = 0.1,
-    root_pos_cost: float = 1.0,
-    root_ori_cost: float = 5.0,
-    leg_reg_cost: float = 5.0,
-    max_iter: int = 20,
-    tol: float = 1e-5,
-) -> tuple[np.ndarray, dict]:
-    """返回 (新 qpos, 求解统计)。
+class RootSolver:
+    """逐帧的 mink 求解器：给定一帧重建 qpos 和这一帧的目标，返回修正后的 qpos。
+
+    离线（solve_root）和在线遥操（sonic_online_bridge）共用这一个类，保证两边算法一致。
+    只依赖当前帧和上一帧的解（热启动），天然因果。
 
     mode="root"：关节全部冻结，只解 root。root 只有 6 个自由度，单脚支撑时正好能把
       支撑脚钉住；但双脚支撑时要同时满足两只脚（12 个约束），而重建腿部关节本身有误差、
@@ -92,76 +82,116 @@ def solve_root(
     mode="legs"：上半身（腰+手臂）冻结为重建值，腿部关节也作为变量、带正则拉回重建值
       （leg_reg_cost）并受关节限位约束——即 GMR 式联合求解，只是把目标从人体关键点换成
       "源动作的支撑脚位姿"，并尽量少改 SONIC 的重建。
-    两种模式都按源动作的接触状态加权：支撑脚强约束、摆动脚弱约束，避免摆动脚拖累支撑脚。
+    两种模式都按接触状态加权：支撑脚强约束、摆动脚弱约束，避免摆动脚拖累支撑脚。
     """
-    if mode not in ("root", "legs"):
-        raise ValueError(f"未知模式 {mode!r}")
-    model = mujoco.MjModel.from_xml_path(mjcf)
-    data = mujoco.MjData(model)
-    if model.nq != qpos_recon.shape[1]:
-        raise ValueError(f"MJCF nq={model.nq} 与 qpos 维度 {qpos_recon.shape[1]} 不一致")
-    n = min(len(qpos_recon), len(qpos_source))
-    qpos_recon, qpos_source = qpos_recon[:n], qpos_source[:n]
 
-    ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, b) for b in (*FOOT_BODIES, ROOT_BODY)]
-    if min(ids) < 0:
-        raise ValueError(f"MJCF 缺少刚体 {FOOT_BODIES + (ROOT_BODY,)}")
-    targets = _body_poses(model, data, qpos_source, ids)  # 源动作的双脚 / root 位姿
-    contact = foot_contacts(targets[:, :2, :3])
+    def __init__(
+        self,
+        mjcf: str,
+        mode: str = "root",
+        stance_pos_cost: float = 20.0,
+        stance_ori_cost: float = 2.0,
+        swing_pos_cost: float = 0.1,
+        root_pos_cost: float = 1.0,
+        root_ori_cost: float = 5.0,
+        leg_reg_cost: float = 5.0,
+        max_iter: int = 20,
+        tol: float = 1e-5,
+    ):
+        if mode not in ("root", "legs"):
+            raise ValueError(f"未知模式 {mode!r}")
+        self.mode = mode
+        self.stance_pos_cost, self.stance_ori_cost, self.swing_pos_cost = stance_pos_cost, stance_ori_cost, swing_pos_cost
+        self.max_iter, self.tol = max_iter, tol
+        self.model = mujoco.MjModel.from_xml_path(mjcf)
+        self.data = mujoco.MjData(self.model)
+        self.body_ids = [
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, b) for b in (*FOOT_BODIES, ROOT_BODY)
+        ]
+        if min(self.body_ids) < 0:
+            raise ValueError(f"MJCF 缺少刚体 {FOOT_BODIES + (ROOT_BODY,)}")
 
-    cfg = mink.Configuration(model)
-    feet = [
-        mink.FrameTask(b, "body", position_cost=stance_pos_cost, orientation_cost=stance_ori_cost, lm_damping=1.0)
-        for b in FOOT_BODIES
-    ]
-    root = mink.FrameTask(ROOT_BODY, "body", position_cost=root_pos_cost, orientation_cost=root_ori_cost, lm_damping=1.0)
-    # free joint 的 6 个速度自由度权重 0 = 自由；上半身权重极大 = 冻结；
-    # 腿部在 legs 模式下只加正则（拉回重建值），root 模式下同样冻结
-    posture_cost = np.full(model.nv, 1e4)
-    posture_cost[:6] = 0.0
-    if mode == "legs":
-        posture_cost[LEG_DOF] = leg_reg_cost
-    posture = mink.PostureTask(model, cost=posture_cost)
-    tasks = [*feet, root, posture]
-    limits = [mink.ConfigurationLimit(model)] if mode == "legs" else None
-    hard_reset = slice(7, 28) if mode == "root" else slice(7, 16)  # 硬重置回重建值的 qpos 段
+        self.cfg = mink.Configuration(self.model)
+        self.feet = [
+            mink.FrameTask(b, "body", position_cost=stance_pos_cost, orientation_cost=stance_ori_cost, lm_damping=1.0)
+            for b in FOOT_BODIES
+        ]
+        self.root = mink.FrameTask(
+            ROOT_BODY, "body", position_cost=root_pos_cost, orientation_cost=root_ori_cost, lm_damping=1.0
+        )
+        # free joint 的 6 个速度自由度权重 0 = 自由；上半身权重极大 = 冻结；
+        # 腿部在 legs 模式下只加正则（拉回重建值），root 模式下同样冻结
+        posture_cost = np.full(self.model.nv, 1e4)
+        posture_cost[:6] = 0.0
+        if mode == "legs":
+            posture_cost[LEG_DOF] = leg_reg_cost
+        self.posture = mink.PostureTask(self.model, cost=posture_cost)
+        self.tasks = [*self.feet, self.root, self.posture]
+        self.limits = [mink.ConfigurationLimit(self.model)] if mode == "legs" else None
+        self.hard_reset = slice(7, 28) if mode == "root" else slice(7, 16)  # 硬重置回重建值的 qpos 段
+        self.prev_root: np.ndarray | None = None
+        self.iters: list[int] = []
 
-    out = qpos_recon.copy()
-    iters = []
-    q = qpos_recon[0].copy()
-    q[:7] = qpos_source[0, :7]  # 首帧 root 从源动作起步
-    for t in range(n):
-        if t > 0:
-            q[:7] = out[t - 1, :7]  # 上一帧的解热启动
-        q[7:] = qpos_recon[t, 7:]
+    def reset(self) -> None:
+        self.prev_root = None
+        self.iters = []
+
+    def step(self, q_recon: np.ndarray, targets: np.ndarray, contact: np.ndarray) -> np.ndarray:
+        """q_recon [28]；targets [3,7]（左脚、右脚、root 的 xyz+wxyz）；contact [2] 布尔。
+
+        首帧 root 从 root 目标起步，之后用上一帧的解热启动。
+        """
+        q = np.asarray(q_recon, dtype=np.float64).copy()
+        q[:7] = targets[2] if self.prev_root is None else self.prev_root
+        cfg = self.cfg
         cfg.update(q)
-        posture.set_target(q)  # 正则目标 = 重建关节
-        for k, task in enumerate(feet):
-            task.set_position_cost(stance_pos_cost if contact[t, k] else swing_pos_cost)
-            task.set_orientation_cost(stance_ori_cost if contact[t, k] else 0.0)
-        for k, task in enumerate((*feet, root)):
-            p = targets[t, k]
+        self.posture.set_target(q)  # 正则目标 = 重建关节
+        for k, task in enumerate(self.feet):
+            task.set_position_cost(self.stance_pos_cost if contact[k] else self.swing_pos_cost)
+            task.set_orientation_cost(self.stance_ori_cost if contact[k] else 0.0)
+        for k, task in enumerate((*self.feet, self.root)):
+            p = targets[k]
             task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(p[3:]), p[:3]))
         prev = cfg.q[:7].copy()
-        for it in range(max_iter):
-            v = mink.solve_ik(cfg, tasks, 0.02, solver="daqp", damping=1e-3, limits=limits)
+        for it in range(self.max_iter):
+            v = mink.solve_ik(cfg, self.tasks, 0.02, solver="daqp", damping=1e-3, limits=self.limits)
             cfg.integrate_inplace(v, 0.02)
             qq = cfg.q.copy()
-            qq[hard_reset] = qpos_recon[t, hard_reset]  # 冻结段硬重置，防数值漂移
+            qq[self.hard_reset] = q_recon[self.hard_reset]  # 冻结段硬重置，防数值漂移
             cfg.update(qq)
-            if np.abs(cfg.q[:7] - prev).max() < tol:
+            if np.abs(cfg.q[:7] - prev).max() < self.tol:
                 break
             prev = cfg.q[:7].copy()
-        iters.append(it + 1)
-        q = cfg.q.copy()
-        out[t, :7] = q[:7]
-        if mode == "legs":
-            out[t, LEG_QPOS] = q[LEG_QPOS]
+        self.iters.append(it + 1)
+        sol = cfg.q.copy()
+        out = np.asarray(q_recon, dtype=np.float64).copy()
+        out[:7] = sol[:7]
+        if self.mode == "legs":
+            out[LEG_QPOS] = sol[LEG_QPOS]
+        # 四元数与上一帧同半球，避免下游插值走长路
+        if self.prev_root is not None and float(np.dot(out[3:7], self.prev_root[3:7])) < 0.0:
+            out[3:7] = -out[3:7]
+        self.prev_root = out[:7].copy()
+        return out
 
-    # 四元数半球对齐，避免下游插值走长路
-    for t in range(1, n):
-        if float(np.dot(out[t, 3:7], out[t - 1, 3:7])) < 0.0:
-            out[t, 3:7] = -out[t, 3:7]
+
+def solve_root(
+    qpos_recon: np.ndarray,
+    qpos_source: np.ndarray,
+    mjcf: str,
+    mode: str = "root",
+    **solver_kwargs,
+) -> tuple[np.ndarray, dict]:
+    """离线整段求解：目标取自源动作（双脚 / root 位姿做正向运动学）。返回 (新 qpos, 求解统计)。"""
+    solver = RootSolver(mjcf, mode=mode, **solver_kwargs)
+    if solver.model.nq != qpos_recon.shape[1]:
+        raise ValueError(f"MJCF nq={solver.model.nq} 与 qpos 维度 {qpos_recon.shape[1]} 不一致")
+    n = min(len(qpos_recon), len(qpos_source))
+    qpos_recon, qpos_source = qpos_recon[:n], qpos_source[:n]
+    targets = _body_poses(solver.model, solver.data, qpos_source, solver.body_ids)  # 源动作的双脚 / root 位姿
+    contact = foot_contacts(targets[:, :2, :3])
+    out = np.stack([solver.step(qpos_recon[t], targets[t], contact[t]) for t in range(n)])
+    iters = solver.iters
     stats = {
         "contact_ratio": float(contact.mean()),
         "leg_change_deg": float(np.rad2deg(np.abs(out[:, LEG_QPOS] - qpos_recon[:, LEG_QPOS])).mean()),

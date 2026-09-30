@@ -4861,3 +4861,58 @@ GMR（github.com/YanjieZe/GMR，mink 联合 IK）的做法才能由约束保证�
 移除 `motions/sonic_bridge`（最早 IsaacLab 导出的 1 条）与 `motions/sonic_smpl_rootfix`（负收益的
 手写脚锁定输出）；`original_qpos` 补全为 21 条真值；新增 `sonic_smpl_mink`。文档、架构图、
 播放指南同步更正。
+
+## 2026-09-30：SMPL 遥操仿真端打通（在线桥接 + ZMQ 实时流 + MimicLite 实时跟踪）
+
+### 1. 修改文件
+
+- `tools_local/mink_root_solve.py`：逐帧逻辑抽成 `RootSolver` 类，`solve_root` 改为调用它。
+  **验证**：两条动作重跑离线桥接，与重构前的 `sonic_smpl_mink` 输出逐位相同（差 0）。
+- 新增 `tools_local/sonic_online_bridge.py`：
+  - `OnlineSmplBridge`：逐帧因果桥接。
+  - `SmplTargetEstimator`：只从 SMPL 估计 mink 目标。
+- 新增 `tools_local/smpl_stream.py`：SMPL 流线格式，以及 PKL 模拟发送端。
+- 新增 `tools_local/teleop_play.py`：仿真遥操端。
+- `tools_local/build_play_set.sh`：增加 `sonic_smpl_online` 组。
+- `.gitignore`：忽略自动生成的占位动作 `motions/live_stream/`。
+- mjlab venv：`uv pip install pyzmq`（27.2.0），play_guide 环境重建一节已补。
+- 文档：play_guide 新增"遥操"一节；`sonic_mimiclite_new.md` §7.1 重写、§0/§7/§8/§10 更新；HANDOVER 同步。
+
+### 2. 关键事实与更正
+
+- **更正**：§7.1 旧版写"编码器要 0.9 s 未来"，那是 robot 编码器（步长 5）的数字。SMPL 编码器步长是 1，
+  帧 t 最晚在收到 t+4 时可算。在线关节与离线**逐位一致**（walk_forward_loop 430 帧，差 0）。
+- **SMPL 坐标约定**：PKL 的 `smpl_joints` 已是 Z-up；`transl` 仍是 Y-up。两者不能用同一个转轴，
+  混用时接触判定一致率只有 38%，分开处理后是 89%。
+- **SMPL→机器人标定**（21 条配对动作）：
+  - 水平位移 0.59 倍，误差 1.1 cm；
+  - 双脚轨迹 0.9 cm；
+  - yaw 差 1.9°；
+  - 骨盆倾角差约 7°。
+- **mink 目标调参过程**（统一用真值接触帧衡量脚滑）：
+  - 直接跟随 SMPL 脚踝：0.186 → 0.186，mink 几乎无效。原因是目标本身在支撑期滑动 0.058 m/s。
+  - 加脚锁、倾角权重 0：0.143 → 0.079；root 朝向误差 7.7° → 4.8°。
+    其中需要把标定姿态和脚朝向目标放平，只保留 yaw，否则 7° 倾角会被复制进脚目标。
+- 旧的脚滑指标用"脚低于最低点 +2 cm"判支撑，会把贴地摆动算成打滑，对在线版不公平，已改为真值接触帧。
+
+### 3. 验证结果（实际运行）
+
+- **离线模拟在线，play 对照**（21 条、8 环境、135 s）：
+  - 真值 3.49°，0/42 失败；
+  - 离线 step 10000 + mink 5.03°，0/42；
+  - 在线遥操链路 5.54°，0/43。
+- **真实 ZMQ 流端到端**（headless，walk_forward_loop）：机器人 vs 原始动作 4.46°；
+  同一动作用离线模拟在线是 4.26°。
+- **FK 自检**：本脚本 FK 与 any4hdmi 数据集缓存按 float16 存储精度比对，差 0。
+- **连续断流测试**：3 遍行走、3 次断流、2 次恢复，40 s 零终止。播放落后 2～6 帧，跳帧 0。
+- **过程中修掉的问题**：
+  1. 首次运行编译 CUDA kernel，开头跑不满实时，落后 210 帧后跳帧、参考瞬移、摔倒 → 加热身 150 步；
+  2. 断流后冻结在迈步姿态 → 摔倒 → 改为平滑回站立；1 s 回站立时从走路中途急停摔过一次 → 改 2 s；
+  3. 发送端重启后 SMPL 位置不连续 → 恢复时桥接重置、以当前位置为新起点。
+
+### 4. 未做 / 限制
+
+- **未接 PICO**：官方 pose 消息缺根平移，要补字段；`smpl_joints` 的坐标约定也未核对。
+- **未上真机**：`AcController.cpp` 需要流式参考输入。
+- **标定系数**：0.59 等是平均体型，换操作员要标定。
+- **仿真端限制**：只支持 `num_envs=1`；单次会话 30 分钟；GUI 模式下的遥操尚未由我实际打开浏览器验证。

@@ -290,3 +290,6 @@ mimiclite_bumi2/training/**/*.usdc
 # checkpoint 回归的运行产物：结果 CSV、日志、告警文件会随训练持续变化，不进 Git；
 # 阶段性结论写进 SONIC_MimicLite_修改记录.md。回归用的 ONNX 已被 *.onnx 规则忽略。
 test_data/regression/
+
+# 遥操占位动作（teleop_play.py 自动生成，30 分钟站立，约 10 MB）
+test_data/motions/any4hdmi-bumi-v2/motions/live_stream/

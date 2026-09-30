@@ -26,7 +26,7 @@
 | checkpoint 回归 | ✅ 每 2000 步自动评估 21 条测试动作，回退/停滞自动告警（§3.4） |
 | 参考动作脚底打滑 | ✅ mink 后处理（root 与重建关节自洽），打滑 -52~81% |
 | play 中 ghost 与机器人的世界系漂移 | ℹ 约 0.25 m，**喂真值也一样**——MimicLite 不追世界坐标，非 SONIC 所致 |
-| 实时 PICO 遥操 | ✗ 未打通；方案见 §7.1（前瞻延迟、root 来源、MimicLite 流式接口） |
+| SMPL 遥操 | ✅ 仿真端打通：ZMQ 实时流 → 在线桥接 → MimicLite，延迟约 200 ms，零失败（§7.1）；✗ 未接 PICO、未上真机 |
 | 真机 | ✗ 未验证 |
 
 ---
@@ -322,40 +322,78 @@ SMPL 直接复用已对齐筛选的 BUMI3 SMPL 语料（可跨机型复用），
 | 限制 | 原因 | 方向 |
 |---|---|---|
 | play 中 ghost 世界系漂移 | MimicLite 不追世界坐标（喂真值也有，§6） | 非缺陷；如需在仿真里对齐观察，可改可视化方式 |
-| 实时 PICO 遥操 | MimicLite 数据集在环境构造时一次性加载；真机 `AcController.cpp` 只读 JSON 文件 | 改造两侧接口为滚动参考；或直接用 `g1_dyn`（官方 SONIC 实时路径）|
+| PICO / 真机遥操 | 仿真端已通（§7.1）；PICO 消息缺根平移；真机 `AcController.cpp` 只读 JSON 文件 | 补 PICO 字段；真机加流式参考输入（照搬 `teleop_play.py` 逻辑） |
 | 最终动作偏离原始动作 | SONIC 重建误差（6.3° vs 真值 3.5°，§6） | 第二轮训练（§3.3），高动态约为静态 2 倍 |
 | mink 目标依赖配对 robot 动作 | 当前用源 robot 动作的支撑脚作目标 | 纯 SMPL 输入时换成缩放后的 SMPL 关键点（GMR 原做法） |
 | 真机 | 未编译、未运行 ROS1 部署包 | 仿真指标达标后再做 |
 
-### 7.1 实时遥操怎么打通（方案，未实施）
+### 7.1 SMPL 遥操（2026-09-30 仿真端打通）
 
-当前 play 是离线的：整段 PKL 先过 SONIC 生成 npz，再交给 MimicLite。实时遥操要把每一环改成流式。
+链路：SMPL 帧（ZMQ，50 Hz）→ 在线 SONIC 桥接 → mink（目标只来自 SMPL）→ FK → MimicLite 实时跟踪。
+用法见 [play_guide.md](docs/source/getting_started/play_guide.md)"遥操"一节。
 
-**能实现。已有的现成部件**：
+**前瞻延迟比原先估计的小得多**（更正：旧版本节写"编码器要 0.9 s 未来"是 robot 编码器的数字）。
+SMPL 编码器未来帧步长是 1，一个窗口只看 10 帧；近端拼接下帧 t 最晚在收到 t+4 时算出。
+在线结果与离线整段计算的关节**逐位一致**，不需要把未来钳位。
 
-- PICO → SMPL 帧 → ZMQ 发送：官方 `gear_sonic/scripts/pico_manager_thread_server.py`（协议 v2 = `smpl_joints`+`smpl_pose`）。
-- 滑动窗口接收：官方 `gear_sonic_deploy/.../streamed_motion_merger.hpp`；超出已收到数据的"未来帧"
-  钳到最新一帧（hold），播放游标刻意落后于接收端。
-- SONIC ONNX（编码器 + `g1_kin`）单次前向为毫秒级；mink 本身逐帧热启动，天然可在线。
+| 环节 | 延迟 |
+|---|---|
+| SONIC 桥接 | 稳态 ≤ 4 帧（开头攒第一个窗口 9 帧） |
+| qvel 前向差分 | 1 帧 |
+| 播放游标（MimicLite 看未来 4 帧 + 2 帧余量） | 6 帧 |
+| **合计：SMPL 帧到达 → 机器人跟到这一帧** | **约 10 帧 = 200 ms** |
 
-**要解决的三个问题**：
+计算量：ONNX + mink 每帧 0.5～0.8 ms（CPU）。
 
-| 问题 | 现状 | 做法 |
+**root 只来自 SMPL**（遥操没有配对的 robot PKL），用 21 条配对动作标定：
+- **水平位置**：机器人 ≈ 0.59 × SMPL，误差 1.1 cm。
+- **双脚轨迹**：同比例缩放后差 0.9 cm。
+- **接触判定**：一致 89%。
+- **朝向**：yaw 差 1.9°。
+
+mink 的目标改为 SMPL 推出的双脚和 root，并做了三处调整，逐步排查后得到：
+- **脚锁**：着地期间目标不动。
+- **root 倾角不约束**：人和机器人骨盆倾角差约 7°，约束了反而把误差带进来。
+- **脚的朝向目标放平**：只保留 yaw。
+
+统一用真值接触帧衡量脚滑：
+
+| 21 条动作 | root 水平误差 | root 朝向误差 | 参考脚滑 m/s |
+|---|---|---|---|
+| 离线（配对 robot root） | 2.2 cm | 0.8° | 0.047 |
+| 在线，不加 mink | 1.4 cm | 7.7° | 0.186 |
+| **在线 + mink（默认）** | 3.3 cm | 4.8° | **0.079** |
+
+MimicLite 跟踪（21 条、8 环境、135 s）：
+
+| 参考 | 机器人 vs 原始动作 | 失败 |
 |---|---|---|
-| **前瞻**：编码器要 10 帧 × 0.1 s = 0.9 s 的未来；MimicLite 还要 +4 步（80 ms） | 离线时未来是已知的 | 同官方：未来钳到最新帧 + 固定播放延迟 D。D 越大越准、越迟钝，需实测取舍 |
-| **root 来源**：mink 目标目前取配对 robot PKL | 遥操只有 SMPL | 用 SMPL 骨盆平移按身高比缩放作 root 目标（GMR 做法），脚接触改为因果判定 |
-| **MimicLite 输入接口**：mjlab 数据集启动时一次性加载；真机 `AcController.cpp` 只读 JSON 文件 | 不接受流 | 仿真：写一个从环形缓冲读参考的 motion command；真机：`AcController` 加 ROS topic 参考输入 |
+| 真值 | 3.49° | 0/42 |
+| 离线 step 10000 + mink | 5.03° | 0/42 |
+| **在线遥操链路**（`sonic_smpl_online`） | **5.54°** | **0/43** |
 
-**分三步**：
+真实 ZMQ 流端到端（walk_forward_loop，headless）：机器人 vs 原始动作 4.46°；同一动作用离线模拟在线是 4.26°。
 
-1. **离线模拟在线（纯本地、无硬件）**：桥接加因果模式（每一时刻只用 ≤ t+D 的输入），在 21 条测试集上
-   扫 D = 0 / 0.1 / 0.2 / 0.5 s，用回归管线量化精度损失。决定遥操可行的延迟区间，也决定是否需要
-   用"未来钳位"的数据增强重训 SONIC。
-2. **仿真端到端流式**：SMPL PKL 按 50 Hz 实时回放发 ZMQ → 在线桥接进程 → mjlab 流式 motion command
-   → MimicLite。这是真正的端到端，换 PICO 只换发送端。
-3. **接 PICO → 真机**：发送端换官方 PICO 服务；真机侧改 `AcController` 接流式参考。
+连续测试：走 3 遍、断流 3 次、恢复 2 次，40 s 零摔倒。播放落后稳定在 2～6 帧，没有跳帧。
 
-备选：直接部署 `g1_dyn`（官方 SONIC 原生实时路径，已同训），作为对照和兜底。
+**实现要点**（`tools_local/teleop_play.py`，不改同事代码，在 play.py 外面包一层）：
+- **占位动作**：play 加载一条 30 分钟的站立占位动作，实时帧逐帧算 FK 后写进去。
+  - FK 算法与 any4hdmi 相同：前向差分 qvel + `mj_forward`。
+  - 启动时有自检：按 float16 存储精度比对，与数据集缓存完全一致。
+- **热身**：先原地站 150 步，等 CUDA kernel 编译完再开始，否则开头跑不满实时，会触发跳帧。
+- **reset 对齐实时帧**：摔倒等 reset 时从当前实时帧开始。
+- **断流与恢复**：
+  - 断流超过 0.3 s，参考在 2 s 内平滑回到站立。1 s 时从走路中途急停实测会摔。
+  - 恢复时桥接重置，以当前位置为新起点，0.5 s 过渡。
+
+**还没做的**：
+1. **接 PICO**：官方 `pico_manager_thread_server.py` 的 pose 消息里**没有根平移**（内部算了骨盆位置但没发），
+   要补一个 `transl` 字段，并按 `tools_local/smpl_stream.py` 的字段名发 `smpl` topic。
+   另外要核对 PICO 的 `smpl_joints` 与训练 PKL 是否同一坐标约定（PKL 是 Z-up、骨盆为原点附近）。
+2. **真机**：同事 `AcController.cpp` 只读 JSON 文件，要加一个流式参考输入（ROS topic），
+   逻辑照搬 `teleop_play.py`（缓冲、游标、断流回站立）。
+3. **SMPL→机器人标定**：0.59 等系数是用 21 条动作的平均体型标定的，换操作员后要在开始时按身高标定。
+4. 备选：直接部署 `g1_dyn`（官方 SONIC 原生实时路径，已同训）。
 
 ---
 
@@ -367,7 +405,7 @@ SMPL 直接复用已对齐筛选的 BUMI3 SMPL 语料（可跨机型复用），
    - 出了更好的 checkpoint，用 `build_play_set.sh` 换进 play。
 2. ~~root 自洽（mink）~~ ✅ 已接入桥接。它修的是参考动作打滑，不是 ghost 漂移（§6）。
    后续：纯 SMPL 输入时改用 SMPL 关键点作目标。
-3. **遥操第一步**：桥接加因果模式，扫一遍前瞻延迟，量化精度损失（§7.1）。
+3. **遥操**：仿真端已通（§7.1）。下一步接 PICO（补根平移字段、核对坐标约定、按操作员身高标定），再做真机流式输入。
 4. **`g1_dyn` 基线**：把第二轮的 `g1_dyn` 导出，在 sim2sim 里直接跑。作为"官方 SONIC 单网络"
    对照组，也作为实时遥操的备选路径。
 5. **下一版数据集**：剔除 788 条非平地动作，并向同事确认 score2 的含义（§5）。
@@ -442,6 +480,17 @@ SMPL 直接复用已对齐筛选的 BUMI3 SMPL 语料（可跨机型复用），
 - 移除全部 BUMI3 代码和资产；
 - 新建 `test_data/` 目录。
 
-### 10.8 试过但放弃
+### 10.8 SMPL 遥操（2026-09-30）
+
+| 文件 | 作用 |
+|---|---|
+| `tools_local/mink_root_solve.py` | 抽出逐帧的 `RootSolver` 类，离线和在线共用；离线结果与重构前逐位一致 |
+| `tools_local/sonic_online_bridge.py` | `OnlineSmplBridge`：逐帧、因果的 SONIC 桥接（关节与离线逐位一致）；`SmplTargetEstimator`：只用 SMPL 估计 mink 目标（缩放、脚锁、接触判定） |
+| `tools_local/smpl_stream.py` | SMPL 流的线格式（沿用官方 ZMQ pose 消息布局，topic `smpl`），以及用 PKL 模拟 PICO 的发送端 |
+| `tools_local/teleop_play.py` | 仿真端：在 play.py 外包一层，把实时参考写进占位动作，负责游标同步、热身、断流回站立 |
+| `tools_local/build_play_set.sh` | 增加第四组 `sonic_smpl_online` |
+| mjlab 环境 | 新装 `pyzmq` |
+
+### 10.9 试过但放弃
 
 `tools_local/recover_root_from_joints.py`：手工锁脚来恢复 root。实测效果是负的，已被 mink 取代，只作为失败记录保留。

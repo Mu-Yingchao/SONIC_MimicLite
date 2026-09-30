@@ -24,7 +24,7 @@
 | 上层训练 | 第二轮进行中（`sonic_bumi2_recon_v1`）。目前最好是第 10000 步：SMPL 链路重建误差 4.09°，第一轮最好是 5.47° |
 | 离线全链路 | 已通。SMPL/Robot PKL → SONIC → mink 后处理 → MimicLite，在本地 mjlab 里跑 21 条测试动作，零失败 |
 | 端到端误差 | 机器人与原始动作差 5.1°。喂原始真值时是 3.5°，差距全部来自 SONIC 重建误差 |
-| PICO 实时遥操 | 未做。方案见 `sonic_mimiclite_new.md` §7.1 |
+| SMPL 遥操 | 仿真端已通：SMPL 实时流 → 在线桥接 → MimicLite，延迟约 200 ms，零失败；还没接 PICO、没上真机（`sonic_mimiclite_new.md` §7.1） |
 | 真机 | 未做 |
 
 看 play 时，ghost 和机器人会慢慢拉开约 0.25 m。**这是正常现象**：MimicLite 不追世界坐标，喂原始真值也一样，官方配置同样把它当截断而不是失败。判断跟踪好坏要看姿态，不看两者隔多远。
@@ -98,6 +98,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 
 | 要做什么 | 怎么做 |
 |---|---|
+| **遥操（仿真）** | 两个终端：`tools_local/teleop_play.py` 和 `tools_local/smpl_stream.py send`，见 play_guide.md「遥操」一节 |
 | **看效果（play）** | 按 `docs/source/getting_started/play_guide.md` 执行，浏览器打开 http://127.0.0.1:8080，右侧 Mimic 面板可切换动作 |
 | **换上层 checkpoint** | `bash tools_local/build_play_set.sh <g1.onnx> <smpl.onnx>`，约 1 分钟，**完成后必须重启 play** |
 | **看训练趋势** | 本地回归循环常驻运行：每 30 分钟检查新 checkpoint，自动导出、评估、出报告，结果在 `test_data/regression/<run>/summary.csv`。出现 `ALERT` 文件表示在退步或停滞 |
@@ -115,7 +116,9 @@ bash tools_local/sonic_regression_loop.sh --loop 1800 --run sonic_bumi2_recon_v1
 | 文件 | 作用 |
 |---|---|
 | `tools_local/sonic_offline_bridge.py` | **桥接主程序**。PKL → SONIC ONNX → qpos npz；解码后做近端交叉淡化拼接，默认跑 mink |
-| `tools_local/mink_root_solve.py` | 用 mink 反解 root，消除参考动作的脚底打滑（借鉴 GMR） |
+| `tools_local/mink_root_solve.py` | 用 mink 反解 root，消除参考动作的脚底打滑（借鉴 GMR）；`RootSolver` 逐帧类，离线和在线共用 |
+| `tools_local/sonic_online_bridge.py` | 遥操用的在线桥接：逐帧、因果，root 只来自 SMPL |
+| `tools_local/smpl_stream.py`、`tools_local/teleop_play.py` | SMPL 流格式与发送端；仿真遥操端 |
 | `tools_local/build_play_set.sh` | 用指定 checkpoint 批量重建 play 数据 |
 | `tools_local/sonic_recon_regression.py` | 回归评估：`evaluate` 算重建误差，`report` 出报告和趋势判断 |
 | `tools_local/sonic_regression_loop.sh` | 常驻回归循环：服务器导出 ONNX → 拉回本地评估 |
@@ -163,6 +166,6 @@ bash tools_local/sonic_regression_loop.sh --loop 1800 --run sonic_bumi2_recon_v1
 ## 10. 下一步
 
 1. **盯第二轮训练**：看回归曲线。停滞时考虑调大 `g1_smpl_latent` 系数；出了更好的 checkpoint 就换进 play。
-2. **遥操第一步**（纯本地）：桥接改成因果模式，扫一遍前瞻延迟，量化精度损失。详见 `sonic_mimiclite_new.md` §7.1。
+2. **遥操接 PICO**：给 PICO 发送端补根平移字段、核对坐标约定、按操作员身高标定；之后做真机的流式参考输入。详见 `sonic_mimiclite_new.md` §7.1。
 3. **`g1_dyn` 对照**：把同训的动作解码器导出，直接在仿真里跑，作为兜底路径。
 4. 仿真指标达标后上真机：先编译 `mimiclite_bumi2/deploy` 的 ROS1 包。

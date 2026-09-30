@@ -21,7 +21,9 @@ SONIC_MimicLite/
             ├── sonic_smpl_mink/ SMPL 链路 + mink 后处理（推荐）
             ├── sonic_smpl/      SMPL 链路，root 直接拼源动作（对照）
             ├── sonic_robot/     robot 链路
-            └── original_qpos/   原始真值，不经 SONIC（对照基准）
+            ├── sonic_smpl_online/ 在线桥接离线跑（纯 SMPL、因果）——遥操等价链路
+            ├── original_qpos/   原始真值，不经 SONIC（对照基准）
+            └── live_stream/     遥操占位动作（teleop_play.py 自动生成，不进 git）
 ```
 
 两个 ASCII 软链接（Hydra 解析不了中文路径，必须用）：
@@ -101,6 +103,7 @@ cat test_data/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink/SOURCE.txt   # �
 | SMPL → SONIC → mink（项目目标链路，推荐） | `.../motions/sonic_smpl_mink` |
 | SMPL → SONIC，root 直接拼源动作 | `.../motions/sonic_smpl` |
 | Robot → SONIC | `.../motions/sonic_robot` |
+| 在线遥操链路（纯 SMPL、逐帧因果，不用配对 robot PKL） | `.../motions/sonic_smpl_online` |
 | 原始真值，不经 SONIC（对照基准） | `.../motions/original_qpos` |
 
 每个目录 21 条动作，覆盖静态/行走/跑跳/表演/高动态。
@@ -116,6 +119,35 @@ viser 里的半透明 ghost 按参考动作的**世界坐标**画，机器人的
 `scripts/eval.py` 把它和 `motion_timeout` 一起算作 success，官方 README 的 play 命令同样关掉它。
 
 目录里所有 `.npz` 都会被自动扫到，加新动作直接放进去即可。
+
+## 遥操（SMPL 实时流）
+
+真正的在线链路：SMPL 帧经 ZMQ 实时发来 → 在线 SONIC 桥接 → MimicLite 实时跟踪。没有 PICO 时用
+PKL 按 50 Hz 模拟。开两个终端：
+
+```bash
+# 终端 1：仿真端。热身约 3 秒后打印"等待 SMPL 流"，在这之前机器人原地站立
+cd ~/下载/SONIC_MimicLite
+unset VIRTUAL_ENV
+mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/teleop_play.py \
+  --onnx test_data/policies/sonic/recon_v1_step_010000_smpl.onnx -- \
+  headless=false checkpoint_path=/home/yingchaomu/sonic_deploy/policies/mimiclite/checkpoint_40000.pt
+
+# 终端 2：发送端（模拟 PICO），换 --smpl 就是换动作；--loop 循环播放
+cd ~/下载/SONIC_MimicLite
+mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/smpl_stream.py send \
+  --smpl test_data/motions/smpl_pkl/walk_forward_loop_003__A022.pkl --loop
+```
+
+浏览器同样开 http://127.0.0.1:8080。
+
+- **发送端可以随时停、随时换动作重发**：断流超过 0.3 s，参考在 2 s 内平滑回到站立；恢复后
+  0.5 s 过渡回操作员姿态，并以机器人当前位置为新起点。
+- **终端每 5 秒打印状态**：`落后 N 帧` 正常在 2～6，是播放游标落后最新参考的帧数
+  （MimicLite 要看参考的未来 4 帧）；`跳帧` 应一直为 0，非 0 表示仿真跑不满实时。
+- **延迟**：SMPL 帧到达 → 机器人跟到这一帧，约 10 帧（200 ms）= SONIC 桥接 4 帧 + 播放 6 帧。
+- **限制**：只跟一个机器人（`num_envs=1`）；单次会话最长 30 分钟（`--minutes` 可调）；
+  面板里的 Clip 切换对遥操无意义；需要 pyzmq（见"环境重建"）。
 
 ## 换策略
 
@@ -205,6 +237,8 @@ unset VIRTUAL_ENV
 uv pip install --python .venv/bin/python warp-lang mjlab
 # 桥接的 mink 后处理（root 自洽）需要 mink 与 QP 求解器
 uv pip install --python .venv/bin/python mink "qpsolvers[daqp]"
+# 遥操的 ZMQ 流
+uv pip install --python .venv/bin/python pyzmq
 
 # 项目注册表（.cache/projects.json）不在 Git 里，需现场生成。
 # discover --enabled 会连带启用三个依赖 IsaacLab 的项目，必须关掉。
