@@ -13,7 +13,7 @@ SONIC_MimicLite/
 └── test_data/
     ├── policies/
     │   ├── mimiclite/       checkpoint_40000.pt（底层，固定）
-    │   └── sonic/           recon_v1_step_008000_{g1,smpl}.onnx（上层，当前最好）
+    │   └── sonic/           recon_v1_step_010000_{g1,smpl}.onnx（上层，当前最好）
     └── motions/
         ├── robot_pkl/       21 条 SONIC 格式机器人动作
         ├── smpl_pkl/        21 条配对 SMPL 动作
@@ -69,7 +69,7 @@ play 读的是预先生成好的 npz，换 SONIC 就是重新生成（约 1 分�
 ```bash
 cd ~/下载/SONIC_MimicLite
 S=test_data/policies/sonic
-bash tools_local/build_play_set.sh $S/recon_v1_step_008000_g1.onnx $S/recon_v1_step_008000_smpl.onnx
+bash tools_local/build_play_set.sh $S/recon_v1_step_010000_g1.onnx $S/recon_v1_step_010000_smpl.onnx
 cat test_data/motions/any4hdmi-bumi-v2/motions/sonic_smpl_mink/SOURCE.txt   # 查当前用的哪个 checkpoint
 ```
 
@@ -160,7 +160,7 @@ unset VIRTUAL_ENV
 `('stats','success')` **不是**合格线，真实训练数据也常是 `0.0`。
 `tracking_metrics` 是累积误差，只用来横向比较，没有固定及格分。
 
-已验证（2026-09-30，SONIC recon_v1 step 8000 + mink，`sonic_smpl_mink` 21 条，8 个机器人跑 8 轮）：
+已验证（2026-09-30，SONIC recon_v1 step 10000 + mink，`sonic_smpl_mink` 21 条，8 个机器人跑 7 轮）：
 每轮 `motion_timeout=1.0`，三个 `*_error` 全 `0.0`，无一失败。
 
 ## 加新动作
@@ -174,7 +174,7 @@ M=test_data/motions/any4hdmi-bumi-v2
 mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/sonic_offline_bridge.py \
   --motion   test_data/motions/smpl_pkl/<名字>.pkl \
   --root-motion test_data/motions/robot_pkl/<名字>.pkl \
-  --encoder smpl --onnx test_data/policies/sonic/recon_v1_step_008000_smpl.onnx \
+  --encoder smpl --onnx test_data/policies/sonic/recon_v1_step_010000_smpl.onnx \
   --manifest $M/manifest.json \
   --out $M/motions/sonic_smpl_mink/<名字>_from_g1_bumi_v2.npz
 ```

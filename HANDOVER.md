@@ -21,7 +21,7 @@
 
 | 环节 | 状态 |
 |---|---|
-| 上层训练 | 第二轮进行中（`sonic_bumi2_recon_v1`）。目前最好是第 8000 步：SMPL 链路重建误差 4.22°，第一轮最好是 5.47° |
+| 上层训练 | 第二轮进行中（`sonic_bumi2_recon_v1`）。目前最好是第 10000 步：SMPL 链路重建误差 4.09°，第一轮最好是 5.47° |
 | 离线全链路 | 已通。SMPL/Robot PKL → SONIC → mink 后处理 → MimicLite，在本地 mjlab 里跑 21 条测试动作，零失败 |
 | 端到端误差 | 机器人与原始动作差 5.1°。喂原始真值时是 3.5°，差距全部来自 SONIC 重建误差 |
 | PICO 实时遥操 | 未做。方案见 `sonic_mimiclite_new.md` §7.1 |
@@ -77,7 +77,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 | MimicLite 训练框架（play 用，同事代码） | `mimiclite_bumi2/training/` |
 | MimicLite 真机部署（ROS1，未用过） | `mimiclite_bumi2/deploy/` |
 | 下层策略 | `test_data/policies/mimiclite/checkpoint_40000.pt` |
-| 上层 ONNX（当前用的） | `test_data/policies/sonic/recon_v1_step_008000_{g1,smpl}.onnx` |
+| 上层 ONNX（当前用的） | `test_data/policies/sonic/recon_v1_step_010000_{g1,smpl}.onnx` |
 | 回归自动拉回的各步 ONNX | `test_data/policies/sonic/regression/<run>/` |
 | 测试动作（21 条配对） | `test_data/motions/{robot_pkl,smpl_pkl}/` |
 | play 参考动作 | `test_data/motions/any4hdmi-bumi-v2/motions/{sonic_smpl_mink,sonic_smpl,sonic_robot,original_qpos}/` |

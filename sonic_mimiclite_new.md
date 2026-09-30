@@ -22,7 +22,7 @@
 | 离线桥接 PKL → ONNX → 参考动作 | ✅ 纯本地，无需 Isaac Lab |
 | 下层 MimicLite-BUMI2 接入 | ✅ `checkpoint_40000.pt`，本地 mjlab + viser 可视化 |
 | **SMPL → SONIC → MimicLite（项目目标链路）** | ✅ 离线端到端零失败；机器人最终动作 vs 原始动作：第二轮 step 8000 + mink **5.13°**（第一轮 6.3°，喂真值 3.49°） |
-| 本地 play 数据 | 已换为第二轮 step 8000 生成（`tools_local/build_play_set.sh`，来源见各目录 `SOURCE.txt`） |
+| 本地 play 数据 | 已换为第二轮 step 10000 生成（`tools_local/build_play_set.sh`，来源见各目录 `SOURCE.txt`） |
 | checkpoint 回归 | ✅ 每 2000 步自动评估 21 条测试动作，回退/停滞自动告警（§3.4） |
 | 参考动作脚底打滑 | ✅ mink 后处理（root 与重建关节自洽），打滑 -52~81% |
 | play 中 ghost 与机器人的世界系漂移 | ℹ 约 0.25 m，**喂真值也一样**——MimicLite 不追世界坐标，非 SONIC 所致 |
@@ -200,7 +200,7 @@ robot 持平；学习率由 PPO 的 KL 自适应、已压到下限附近，Adam 
 | SMPL | 4.71° | 4.54° | 4.28° | 4.22° | **4.09°** |
 | robot | 4.40° | 4.05° | 3.97° | 3.94° | **3.89°** |
 
-第一轮最好成绩 5.47°，第二轮开局即低于它，step 10000 比它好 25.3%，趋势仍在下降、未停滞。play 目前用 step 8000。
+第一轮最好成绩 5.47°，第二轮开局即低于它，step 10000 比它好 25.3%，趋势仍在下降、未停滞。play 目前用 step 10000。
 
 step 8000 + mink 的误差构成（`ref_diag`，重建 vs 原始动作，4.12°）：
 - **分部位**：腿 3.08°、手臂 5.97°、腰 1.81°。
