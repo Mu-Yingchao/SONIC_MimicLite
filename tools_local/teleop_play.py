@@ -34,7 +34,7 @@ from scipy.spatial.transform import Rotation, Slerp
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from smpl_stream import DEFAULT_ENDPOINT, TOPIC, unpack  # noqa: E402
+from smpl_stream import DEFAULT_ENDPOINT, PICO_ENDPOINT, PICO_TOPIC, TOPIC, pico_frames, unpack  # noqa: E402
 from sonic_online_bridge import OnlineSmplBridge  # noqa: E402
 
 REPO = HERE.parent
@@ -93,9 +93,10 @@ class LiveFeeder:
         self.mdata = mujoco.MjData(self.model)
         self.sock = zmq.Context.instance().socket(zmq.SUB)
         self.sock.setsockopt(zmq.RCVHWM, 10000)
+        self.source = args.source
         self.sock.connect(args.endpoint)
         self.endpoint = args.endpoint
-        self.sock.setsockopt(zmq.SUBSCRIBE, TOPIC)
+        self.sock.setsockopt(zmq.SUBSCRIBE, PICO_TOPIC if args.source == "pico" else TOPIC)
         self.zmq = zmq
         self.qpos: list[np.ndarray] = []
         self.written = -1          # 已写入真实数据的最后一帧（写第 i 帧需要第 i+1 帧来算速度）
@@ -122,17 +123,21 @@ class LiveFeeder:
                 msg = self.sock.recv(self.zmq.NOBLOCK)
             except self.zmq.Again:
                 return
-            idx, frame = unpack(msg)
-            self.received += 1
-            if self.expect is None:
-                self.first_index = self.expect = idx
-            if idx < self.expect:  # 发送端重启，帧号回退：当作新的一段，接着往后排
-                self.expect = idx
-            while idx > self.expect:  # 网络丢帧：用上一帧补齐，保持 50 Hz 时间轴
-                self._push(self.last_frame)
-                self.dropped += 1
-            self._push(frame)
-            self.last_frame = frame
+            # PICO 每条消息带最近 N 帧（滑动窗口），smpl 格式每条一帧
+            items = pico_frames(msg) if self.source == "pico" else [unpack(msg)]
+            if self.expect is not None and items[-1][0] < self.expect - 1:
+                self.expect = items[0][0]  # 整条都比已处理的旧：发送端重启，当作新的一段
+            for idx, frame in items:
+                if self.expect is None:
+                    self.first_index = self.expect = idx
+                if idx < self.expect:  # 窗口里已经处理过的帧
+                    continue
+                self.received += 1
+                while idx > self.expect:  # 网络丢帧：用上一帧补齐，保持 50 Hz 时间轴
+                    self._push(self.last_frame)
+                    self.dropped += 1
+                self._push(frame)
+                self.last_frame = frame
 
     def _push(self, frame: dict) -> None:
         self.expect += 1
@@ -165,6 +170,19 @@ class LiveFeeder:
             self.stand[:2] = last[:2]
             self.stand[3:7] = Rotation.from_euler("Z", yaw).as_quat()[[3, 0, 1, 2]]
         self.qpos.append(_blend(last, self.stand, 1.0 / TO_STAND))
+
+    def _heading_check(self) -> str:
+        """坐标约定自检：最近 1 s 在走动时，行进方向相对身体朝向的夹角。
+        向前走应接近 0°；接近 180° 说明根平移前后反了，接近 ±90° 说明平移与朝向的坐标轴没对齐。"""
+        if len(self.qpos) < 51 or self.stalled:
+            return ""
+        a, b = self.qpos[-51], self.qpos[-1]
+        d = b[:2] - a[:2]
+        if np.linalg.norm(d) < 0.3:  # 1 s 内走不到 0.3 m：没在走，不判断
+            return ""
+        yaw = Rotation.from_quat(b[[4, 5, 6, 3]]).as_euler("ZYX")[0]
+        ang = np.rad2deg(np.arctan2(d[1], d[0]) - yaw)
+        return f"  行进方向-朝向 {(ang + 180) % 360 - 180:+.0f}°"
 
     # ---------- 写入占位动作 ----------
     def attach(self, env) -> None:
@@ -276,18 +294,23 @@ class LiveFeeder:
         if now - self.t_report > 5.0:
             self.t_report = now
             print(f"[teleop] 已收 {self.received} 帧  已写 {self.written + 1}  "
-                  f"播放 t={t}  落后 {self.written - t} 帧  补帧 {self.dropped}  跳帧 {self.jumps}", flush=True)
+                  f"播放 t={t}  落后 {self.written - t} 帧  补帧 {self.dropped}  跳帧 {self.jumps}"
+                  f"{self._heading_check()}", flush=True)
         return carry
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--onnx", type=Path, required=True, help="SONIC *_smpl.onnx")
-    ap.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
+    ap.add_argument("--source", choices=["smpl", "pico"], default="smpl",
+                    help="smpl：tools_local/smpl_stream.py 逐帧流；pico：pico_manager_thread_server.py 的 pose 消息")
+    ap.add_argument("--endpoint", default=None, help=f"默认 smpl {DEFAULT_ENDPOINT}，pico {PICO_ENDPOINT}")
     ap.add_argument("--minutes", type=float, default=30.0, help="单次会话最长时长（占位动作长度）")
     ap.add_argument("--no-mink", action="store_true", help="不做 mink 后处理（对照用）")
     ap.add_argument("play_args", nargs="*", help="`--` 之后原样传给 play.py 的 Hydra 参数")
     args = ap.parse_args()
+    if args.endpoint is None:
+        args.endpoint = PICO_ENDPOINT if args.source == "pico" else DEFAULT_ENDPOINT
 
     placeholder = ensure_placeholder(int(args.minutes * 60 * 50))
     feeder = LiveFeeder(args)

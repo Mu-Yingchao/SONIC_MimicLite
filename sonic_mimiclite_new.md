@@ -386,10 +386,25 @@ MimicLite 跟踪（21 条、8 环境、135 s）：
   - 断流超过 0.3 s，参考在 2 s 内平滑回到站立。1 s 时从走路中途急停实测会摔。
   - 恢复时桥接重置，以当前位置为新起点，0.5 s 过渡。
 
+**与官方 / BUMI3 PICO 遥操的延迟对比**：
+- BUMI3（沿用官方做法）把 PICO 最近 10 帧直接当编码器窗口，控制参考取窗口第 0 帧，所以落后 9 帧（180 ms）。
+- 我们取解码器在窗口内偏移 5～10 帧处的预测（近端拼接），SONIC 侧只落后 4 帧。
+- 但 MimicLite 还要看参考的未来 4 帧，所以整条链路仍约 10 帧。
+
+**接 PICO**（2026-09-30 代码完成，待戴设备实测）：
+- 输入：官方 `pico_manager_thread_server.py`（`--num_frames_to_send 10`），它发的正是编码器要的量：
+  - `smpl_joints` 是局部关节；
+  - `body_quat_w` 是训练端根朝向。与我们的换算核对，差 1.5e-7。
+- 官方原版**缺根平移**，已在本仓库的该文件里补发 `smpl_transl`：骨盆位置，插值方式与其它字段相同。
+  只是新增字段，原有接收端不受影响。
+- `teleop_play.py --source pico` 按 frame_index 去重窗口帧。用 PKL 模拟 PICO 消息测过端到端。
+- 待实测确认：`smpl_transl` 与 SMPL transl 同为 Y-up。终端会打印"行进方向-朝向"夹角作为自检，离线数据上向前走是 ±5°。
+- `.venv_teleop` 已修好，完全指向本仓库：
+  - 原来的两个可编辑安装都指向 BUMI3 老目录 `sonic_bumi_full`；
+  - SDK 的 `.so` RUNPATH 也写死了老目录，已改为 `$ORIGIN/lib`。
+
 **还没做的**：
-1. **接 PICO**：官方 `pico_manager_thread_server.py` 的 pose 消息里**没有根平移**（内部算了骨盆位置但没发），
-   要补一个 `transl` 字段，并按 `tools_local/smpl_stream.py` 的字段名发 `smpl` topic。
-   另外要核对 PICO 的 `smpl_joints` 与训练 PKL 是否同一坐标约定（PKL 是 Z-up、骨盆为原点附近）。
+1. **戴 PICO 实测**：按 play_guide"接真 PICO"的验收顺序做。
 2. **真机**：同事 `AcController.cpp` 只读 JSON 文件，要加一个流式参考输入（ROS topic），
    逻辑照搬 `teleop_play.py`（缓冲、游标、断流回站立）。
 3. **SMPL→机器人标定**：0.59 等系数是用 21 条动作的平均体型标定的，换操作员后要在开始时按身高标定。
@@ -490,6 +505,10 @@ MimicLite 跟踪（21 条、8 环境、135 s）：
 | `tools_local/teleop_play.py` | 仿真端：在 play.py 外包一层，把实时参考写进占位动作，负责游标同步、热身、断流回站立 |
 | `tools_local/build_play_set.sh` | 增加第四组 `sonic_smpl_online` |
 | mjlab 环境 | 新装 `pyzmq` |
+| `gear_sonic/scripts/pico_manager_thread_server.py` | 官方 PICO 服务，补发 `smpl_transl`（根平移） |
+| `tools_local/smpl_stream.py` | 加 PICO pose 消息解析；`send --format pico` 用 PKL 模拟 PICO 服务 |
+| `tools_local/sonic_offline_bridge.py` | ONNX 会话单线程、关自旋。原来遥操进程常驻占满 17 个核，挤得同机仿真跑不满实时 |
+| `.venv_teleop` | 补 `gear_sonic[teleop]`、torch；XRoboToolkit SDK 改为指向本仓库 |
 
 ### 10.9 试过但放弃
 

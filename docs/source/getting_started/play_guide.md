@@ -146,8 +146,51 @@ mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/smpl_stream.py 
 - **终端每 5 秒打印状态**：`落后 N 帧` 正常在 2～6，是播放游标落后最新参考的帧数
   （MimicLite 要看参考的未来 4 帧）；`跳帧` 应一直为 0，非 0 表示仿真跑不满实时。
 - **延迟**：SMPL 帧到达 → 机器人跟到这一帧，约 10 帧（200 ms）= SONIC 桥接 4 帧 + 播放 6 帧。
+- **CPU**：仿真端正常占用不到 1 个核。如果 `top` 里它占十几个核，说明是修复 onnxruntime 线程自旋之前的旧进程，重启即可。
 - **限制**：只跟一个机器人（`num_envs=1`）；单次会话最长 30 分钟（`--minutes` 可调）；
   面板里的 Clip 切换对遥操无意义；需要 pyzmq（见"环境重建"）。
+
+### 接真 PICO
+
+**PICO 端准备**（沿用 BUMI3 已跑通的流程）：
+1. PC 端启动 XRoboToolkit 服务：桌面图标 "roboticsservice"，或 `/opt/apps/roboticsservice/run3D.sh`。
+2. PICO、两个手柄、两个脚踝 tracker 完成校准。
+3. PICO 与 PC 在同一网络，PICO 上的 XRoboToolkit 应用连上 PC 服务。
+
+然后开两个终端：
+
+```bash
+# 终端 1：PICO → SMPL → ZMQ（本仓库的官方服务，已补发根平移 smpl_transl）
+cd ~/下载/SONIC_MimicLite
+.venv_teleop/bin/python gear_sonic/scripts/pico_manager_thread_server.py \
+  --input-source xrt --port 5556 --target_fps 50 --num_frames_to_send 10
+# 看到 "ZMQ socket bound to port 5556" 和周期 FPS（接近 50）后保持运行
+
+# 终端 2：仿真端，改为收 PICO
+cd ~/下载/SONIC_MimicLite
+unset VIRTUAL_ENV
+mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/teleop_play.py --source pico \
+  --onnx test_data/policies/sonic/recon_v1_step_010000_smpl.onnx -- \
+  headless=false checkpoint_path=/home/yingchaomu/sonic_deploy/policies/mimiclite/checkpoint_40000.pt
+```
+
+**第一次上 PICO 的验收顺序**：
+1. 先站定再开始，只做小幅动作：抬手、转身、下蹲。
+2. 然后原地踏步，再向前走几步。
+3. 看终端 2 的 `行进方向-朝向`：向前走时应接近 **0°**。
+   - 接近 **180°**：根平移前后反了。
+   - 接近 **±90°**：根平移与朝向的坐标轴没对齐。
+
+   出现后两种情况，把这行输出发回来改。
+4. 前面都正常后，再做大动作。
+
+**不戴 PICO 时的替代**：终端 1 换成用 PKL 模拟 PICO 服务，消息格式与官方完全相同，
+测的是同一条 PICO 解析路径：
+
+```bash
+mimiclite_bumi2/training/venv/mjlab/.venv/bin/python tools_local/smpl_stream.py send \
+  --format pico --smpl test_data/motions/smpl_pkl/walk_forward_loop_003__A022.pkl --loop
+```
 
 ## 换策略
 
@@ -239,6 +282,14 @@ uv pip install --python .venv/bin/python warp-lang mjlab
 uv pip install --python .venv/bin/python mink "qpsolvers[daqp]"
 # 遥操的 ZMQ 流
 uv pip install --python .venv/bin/python pyzmq
+
+# PICO 服务用的 .venv_teleop（仓库根目录）：只补依赖，不要重跑 install_pico.sh
+# （它会删掉整个 venv）。XRoboToolkit SDK 用仓库里已编译好的 .so，
+# RUNPATH 已改为 $ORIGIN/lib，通过 .pth 指向本仓库
+cd ~/下载/SONIC_MimicLite
+uv pip install --python .venv_teleop/bin/python -e "gear_sonic[teleop]"
+echo "$PWD/external_dependencies/XRoboToolkit-PC-Service-Pybind_X86_and_ARM64" \
+  > .venv_teleop/lib/python3.10/site-packages/xrobotoolkit_sdk_local.pth
 
 # 项目注册表（.cache/projects.json）不在 Git 里，需现场生成。
 # discover --enabled 会连带启用三个依赖 IsaacLab 的项目，必须关掉。

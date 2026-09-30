@@ -4916,3 +4916,33 @@ GMR（github.com/YanjieZe/GMR，mink 联合 IK）的做法才能由约束保证�
 - **未上真机**：`AcController.cpp` 需要流式参考输入。
 - **标定系数**：0.59 等是平均体型，换操作员要标定。
 - **仿真端限制**：只支持 `num_envs=1`；单次会话 30 分钟；GUI 模式下的遥操尚未由我实际打开浏览器验证。
+
+## 2026-09-30（续）：遥操接入 PICO（代码完成，待戴设备实测）
+
+- **参考实现**：BUMI3 时期的 PICO 遥操（`dcf8a87`：`bumi3_realtime_smpl.py` 仍在仓库，
+  `run_bumi3_pico_sim2sim.py` 已在重组时删除）。它用官方 `pico_manager_thread_server.py --num_frames_to_send 10`，
+  把最近 10 帧当编码器窗口，落后 9 帧。
+- **核对**：
+  - PICO 的 `smpl_joints` 是局部关节，`body_quat_w` 是训练端根朝向；
+  - 官方 `smpl_root_ytoz_up` + `remove_smpl_base_rot` 与我们的 `smpl_root_rotation` 在 50 帧上最大差 1.5e-7。
+- **修改**：
+  - `pico_manager_thread_server.py` 补发 `smpl_transl`，是新增字段；
+  - `sonic_online_bridge.normalize_frame` 统一 PKL / PICO 两种输入。重构后 walk_forward_loop 在线输出与重构前逐位相同；
+  - `smpl_stream.py` 加 PICO 消息解析和模拟发送；
+  - `teleop_play.py --source pico`（窗口帧去重、发送端重启识别），加"行进方向-朝向"坐标自检。
+    离线数据上向前走的读数是 +5° / −3° / +3°。
+- **onnxruntime 线程问题**：默认线程池按核数开线程并自旋，遥操进程常驻 1700% CPU（`top -H` 看到 19 个线程各占满一核）。
+  改为单线程、关自旋后是 45%。同机高负载（load 31/20 核）时仿真跑不满实时，会出现跳帧。
+- **`.venv_teleop` 修复**：
+  - 原来缺 zmq/torch/scipy；`gear_sonic` 与 `xrobotoolkit_sdk` 两个可编辑安装都指向 BUMI3 老目录 `sonic_bumi_full`；
+  - SDK `.so` 的 RUNPATH 写死老目录。
+  - 处理：补装 `gear_sonic[teleop]` 和 torch 2.14.0+cu130（走 uv 缓存）；`patchelf --set-rpath '$ORIGIN/lib'`；
+    用 `.pth` 指向本仓库的 SDK 目录。
+  - 重新编译 SDK 失败（CMake 配置报错），因为已有 `.so` 可用，未深究。
+  - `pico_manager_thread_server.py --help` 在该环境下正常。
+- **验证**：
+  - 用 PKL 模拟 PICO 消息（10 帧滑动窗口，端口 5556）端到端跑通。
+  - 机器人 vs 原始动作 5.46°。当时同机有占满 17 核的旧进程，跳帧 3～5 次，数值偏高，不作为结论。
+- **未验证**：
+  - 未戴 PICO 实测，XRoboToolkit PC 服务当时未运行；
+  - `smpl_transl` 的坐标约定待实测时用"行进方向-朝向"自检确认。

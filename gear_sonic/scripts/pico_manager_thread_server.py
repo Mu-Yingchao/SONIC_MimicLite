@@ -1312,6 +1312,7 @@ class PoseStreamer:
         self.prev_smpl_pose_np = None
         self.prev_smpl_joints_np = None
         self.prev_body_quat_np = None
+        self.prev_smpl_transl_np = None  # SONIC_MimicLite：根平移，见下方 smpl_transl 字段
         self.next_target_ns = None
         self.frame_start = time.time()
 
@@ -1335,6 +1336,7 @@ class PoseStreamer:
         self.prev_smpl_pose_np = None
         self.prev_smpl_joints_np = None
         self.prev_body_quat_np = None
+        self.prev_smpl_transl_np = None  # SONIC_MimicLite：根平移，见下方 smpl_transl 字段
         self.next_target_ns = None
         self.buffer_cleared = True
         self.step = 0
@@ -1385,6 +1387,11 @@ class PoseStreamer:
         body_quat_np = (
             latest_data["global_orient_quat"].detach().cpu().numpy()[0].astype(np.float32)
         )
+        # SONIC_MimicLite：骨盆位置（与 SMPL transl 同一 Y-up 约定）。官方消息原本不带根平移，
+        # MimicLite 下层需要 root 位置，遥操端（tools_local/teleop_play.py）用它估计机器人 root。
+        smpl_transl_np = (
+            latest_data["adjusted_transl"].detach().cpu().numpy().reshape(-1)[:3].astype(np.float32)
+        )
         curr_stamp_ns = int(sample.get("timestamp_ns", 0))
         step_ns = int(1e9 / max(1, self.target_fps))
         if self.prev_stamp_ns is None:
@@ -1392,6 +1399,7 @@ class PoseStreamer:
             self.prev_smpl_pose_np = smpl_pose_np
             self.prev_smpl_joints_np = smpl_joints_np
             self.prev_body_quat_np = body_quat_np
+            self.prev_smpl_transl_np = smpl_transl_np
             self.next_target_ns = curr_stamp_ns
             return
         if curr_stamp_ns <= self.prev_stamp_ns:
@@ -1409,6 +1417,9 @@ class PoseStreamer:
         elif alpha > 1.0:
             alpha = 1.0
         use_joints = (1.0 - alpha) * self.prev_smpl_joints_np + alpha * smpl_joints_np
+        use_transl = ((1.0 - alpha) * self.prev_smpl_transl_np + alpha * smpl_transl_np).astype(
+            np.float32
+        )
         use_pose = _interp_pose_axis_angle(self.prev_smpl_pose_np, smpl_pose_np, alpha).astype(
             np.float32
         )
@@ -1492,6 +1503,7 @@ class PoseStreamer:
         self.frame_buffer["smpl_pose"].append(use_pose)
         self.frame_buffer["smpl_joints"].append(use_joints)
         self.frame_buffer["body_quat_w"].append(use_body_quat)
+        self.frame_buffer["smpl_transl"].append(use_transl)
         self.frame_buffer["frame_index"].append(int(self.step))
         self.frame_buffer["joint_pos"].append(joint_pos)
         pico_dt = float(sample.get("dt", 0.0))
@@ -1514,6 +1526,7 @@ class PoseStreamer:
                 "smpl_pose": np.stack((self.frame_buffer["smpl_pose"]), axis=0),
                 "smpl_joints": np.stack((self.frame_buffer["smpl_joints"]), axis=0),
                 "body_quat_w": np.stack((self.frame_buffer["body_quat_w"]), axis=0),
+                "smpl_transl": np.stack((self.frame_buffer["smpl_transl"]), axis=0),
                 "joint_pos": np.stack((self.frame_buffer["joint_pos"]), axis=0),
                 "joint_vel": np.zeros((N, 29)),
                 "vr_position": vr_3pt_pose[:, :3].flatten(),
@@ -1554,6 +1567,7 @@ class PoseStreamer:
         self.prev_smpl_pose_np = smpl_pose_np
         self.prev_smpl_joints_np = smpl_joints_np
         self.prev_body_quat_np = body_quat_np
+        self.prev_smpl_transl_np = smpl_transl_np
         self.fps_counter += 1
         current_time = time.time()
         if current_time - self.last_fps_report >= 5.0:

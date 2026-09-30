@@ -67,6 +67,29 @@ def smpl_root_rotation(root_aa: np.ndarray) -> Rotation:
     return _Y_TO_Z_UP * Rotation.from_rotvec(root_aa) * _SMPL_BASE_INV
 
 
+def normalize_frame(frame: dict) -> dict:
+    """把一帧 SMPL 统一成 {root: 训练端根朝向, local: 局部关节 [24,3], pelvis: 骨盆世界位置 Z-up}。
+
+    接受两种来源：
+      - 训练 PKL：pose_aa[72]（前 3 维根朝向，Y-up）、transl[3]（Y-up）、smpl_joints[24,3]（带根朝向、Z-up）
+      - PICO（官方 pico_manager_thread_server）：smpl_joints[24,3] 已是局部关节、
+        body_quat_w[4] 已是训练端根朝向（wxyz）、smpl_transl[3]（Y-up，本仓库补的字段）
+    两种来源的根朝向换算已核对一致（官方 smpl_root_ytoz_up + remove_smpl_base_rot 与
+    smpl_root_rotation 差 1.5e-7）。
+    """
+    if "body_quat_w" in frame:
+        q = np.asarray(frame["body_quat_w"], dtype=np.float64)
+        root = Rotation.from_quat(q[[1, 2, 3, 0]] / np.linalg.norm(q))
+        local = np.asarray(frame["smpl_joints"], dtype=np.float64)
+        transl = frame["smpl_transl"]
+    else:
+        root = smpl_root_rotation(np.asarray(frame["pose_aa"], dtype=np.float64)[:3])
+        local = root.inv().apply(np.asarray(frame["smpl_joints"], dtype=np.float64))
+        transl = frame["transl"]
+    pelvis = _Y_TO_Z_UP.apply(np.asarray(transl, dtype=np.float64))
+    return {"root": root, "local": local, "pelvis": pelvis}
+
+
 def _yaw(rot: Rotation) -> float:
     return float(rot.as_euler("ZYX")[0])
 
@@ -94,14 +117,13 @@ class SmplTargetEstimator:
         self.calibrated = False
 
     def _smpl_world(self, frame: dict) -> tuple[np.ndarray, np.ndarray, Rotation]:
-        """返回 (骨盆世界位置 Z-up, 双脚踝世界位置 Z-up [2,3], 根朝向)。
+        """frame 为 normalize_frame 的结果；返回 (骨盆世界位置, 双脚踝世界位置 [2,3], 根朝向)，均 Z-up。
 
-        注意坐标：PKL 的 smpl_joints 已是 Z-up、以骨盆为原点附近；transl 仍是 Y-up，需要转轴。
+        注意坐标：PKL 的 smpl_joints 已是 Z-up；transl 仍是 Y-up，需要转轴（normalize_frame 已处理）。
         """
-        pelvis = _Y_TO_Z_UP.apply(np.asarray(frame["transl"], dtype=np.float64))
-        joints = np.asarray(frame["smpl_joints"], dtype=np.float64)
-        ankles = joints[list(SMPL_ANKLES)] - joints[0] + pelvis
-        return pelvis, ankles, smpl_root_rotation(np.asarray(frame["pose_aa"], dtype=np.float64)[:3])
+        root, local, pelvis = frame["root"], frame["local"], frame["pelvis"]
+        ankles = root.apply(local[list(SMPL_ANKLES)] - local[0]) + pelvis
+        return pelvis, ankles, root
 
     def calibrate(self, frame: dict, q_recon0: np.ndarray) -> None:
         pelvis, ankles, rot = self._smpl_world(frame)
@@ -237,11 +259,10 @@ class OnlineSmplBridge:
         return sum(w * self._at(s, off) for s, off, w in parts)
 
     def push(self, frame: dict) -> list[tuple[int, np.ndarray]]:
-        pose = np.asarray(frame["pose_aa"], dtype=np.float64)
-        root = smpl_root_rotation(pose[:3])
-        joints = np.asarray(frame["smpl_joints"], dtype=np.float64)
-        self.local.append((root.inv().apply(joints)).astype(np.float32))
-        self.roots.append(root)
+        """frame：训练 PKL 或 PICO 格式的一帧（见 normalize_frame）。"""
+        frame = normalize_frame(frame)
+        self.local.append(frame["local"].astype(np.float32))
+        self.roots.append(frame["root"])
         self.frames.append(frame)
         out = []
         while True:

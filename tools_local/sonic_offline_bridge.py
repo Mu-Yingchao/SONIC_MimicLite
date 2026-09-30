@@ -209,7 +209,14 @@ def load_joint_maps(manifest_path: Path) -> tuple[list[int], list[int]]:
 
 def open_session(onnx_path: Path, encoder: str) -> ort.InferenceSession:
     """打开 ONNX 并校验输入维度与 encoder 匹配。"""
-    session = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    # 单线程、关自旋：模型很小，单线程每帧 < 1 ms；默认线程池会按核数开线程并自旋空转，
+    # 实测遥操进程因此常驻占满 17 个核，拖慢同机的仿真（跑不满实时 → 跳帧）
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 1
+    opts.inter_op_num_threads = 1
+    opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    opts.add_session_config_entry("session.inter_op.allow_spinning", "0")
+    session = ort.InferenceSession(str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"])
     in_dim = session.get_inputs()[0].shape[1]
     tok_dim = SMPL_TOKENIZER_DIM if encoder == "smpl" else ROBOT_TOKENIZER_DIM
     if in_dim != tok_dim + PROPRIOCEPTION_DIM:
